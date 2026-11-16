@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Caos en Nochebuena</title>
+</head>
+<body>
+  <h1>Caos en Nochebuena</h1>
+  <p id="estado">Conectando…</p>
+  <button id="tirar" disabled>Tirar Bola de nieve</button>
+  <ul id="actividad"></ul>
+
+  <script>
+    const estado = document.querySelector("#estado");
+    const boton = document.querySelector("#tirar");
+    const actividad = document.querySelector("#actividad");
+
+    const protocolo = location.protocol === "https:" ? "wss:" : "ws:";
+    const parametros = new URLSearchParams(location.search);
+    const codigoSala = (parametros.get("sala") ?? "NIEVE").trim().toUpperCase();
+
+    // Pasamos el código de la página a la conexión WebSocket.
+    const socket = new WebSocket(
+    `${protocolo}//${location.host}/ws?sala=${encodeURIComponent(codigoSala)}`
+);
+
+    socket.addEventListener("open", () => {
+      estado.textContent = `Conectado a la sala ${codigoSala}`;
+      boton.disabled = false;
+    });
+
+    socket.addEventListener("close", () => {
+      estado.textContent = "Desconectado";
+      boton.disabled = true;
+    });
+
+    boton.addEventListener("click", () => {
+      socket.send("tirar-bola");
+    });
+
+    socket.addEventListener("message", (evento) => {
+      const jugada = document.createElement("li");
+      jugada.textContent = evento.data;
+      actividad.append(jugada);
+    });
+  </script>
+</body>
+</html>
