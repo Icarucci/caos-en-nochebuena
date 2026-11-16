@@ -2,47 +2,35 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Caos en Nochebuena</title>
+  <script src="/sala.js" defer></script>
 </head>
 <body>
   <h1>Caos en Nochebuena</h1>
-  <p id="estado">Conectando…</p>
-  <button id="tirar" disabled>Tirar Bola de nieve</button>
-  <ul id="actividad"></ul>
 
-  <script>
-    const estado = document.querySelector("#estado");
-    const boton = document.querySelector("#tirar");
-    const actividad = document.querySelector("#actividad");
+  <!-- Pantalla inicial para crear una sala o entrar con un código. -->
+  <section>
+    <button id="crear-sala" type="button">Crear sala privada</button>
 
-    const protocolo = location.protocol === "https:" ? "wss:" : "ws:";
-    const parametros = new URLSearchParams(location.search);
-    const codigoSala = (parametros.get("sala") ?? "NIEVE").trim().toUpperCase();
+    <form id="formulario-ingreso">
+      <label for="codigo">Código de sala</label>
+      <input id="codigo" name="codigo" required
+             maxlength="6" pattern="[A-Za-z0-9]{6}"
+             placeholder="A1B2C3" autocomplete="off">
+      <button type="submit">Unirse con código</button>
+    </form>
 
-    // Pasamos el código de la página a la conexión WebSocket.
-    const socket = new WebSocket(
-    `${protocolo}//${location.host}/ws?sala=${encodeURIComponent(codigoSala)}`
-);
+    <p id="estado" role="status">Creá una sala o ingresá un código.</p>
+  </section>
 
-    socket.addEventListener("open", () => {
-      estado.textContent = `Conectado a la sala ${codigoSala}`;
-      boton.disabled = false;
-    });
-
-    socket.addEventListener("close", () => {
-      estado.textContent = "Desconectado";
-      boton.disabled = true;
-    });
-
-    boton.addEventListener("click", () => {
-      socket.send("tirar-bola");
-    });
-
-    socket.addEventListener("message", (evento) => {
-      const jugada = document.createElement("li");
-      jugada.textContent = evento.data;
-      actividad.append(jugada);
-    });
-  </script>
+  <!-- La mesa se muestra cuando Java confirma el ingreso. -->
+  <section id="mesa" hidden>
+    <h2 id="titulo-sala"></h2>
+    <p id="cantidad-jugadores" role="status"></p>
+    <button id="tirar" type="button" disabled>Tirar Bola de nieve</button>
+    <h3>Actividad</h3>
+    <ul id="actividad"></ul>
+  </section>
 </body>
 </html>
