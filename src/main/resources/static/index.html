@@ -2,47 +2,59 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Caos en Nochebuena</title>
+  <script src="/sala.js" defer></script>
 </head>
 <body>
   <h1>Caos en Nochebuena</h1>
-  <p id="estado">Conectando…</p>
-  <button id="tirar" disabled>Tirar Bola de nieve</button>
-  <ul id="actividad"></ul>
+  <p id="estado" role="status">Creá una sala o ingresá un código.</p>
 
-  <script>
-    const estado = document.querySelector("#estado");
-    const boton = document.querySelector("#tirar");
-    const actividad = document.querySelector("#actividad");
+  <!-- El mismo nombre se usa para crear una sala o entrar con un código. -->
+  <section id="acceso">
+    <label for="nombre">Tu nombre</label>
+    <input id="nombre" name="nombre" form="formulario-ingreso"
+           required maxlength="20" placeholder="Ignacio">
+    <button id="crear-sala" type="button">Crear sala privada</button>
 
-    const protocolo = location.protocol === "https:" ? "wss:" : "ws:";
-    const parametros = new URLSearchParams(location.search);
-    const codigoSala = (parametros.get("sala") ?? "NIEVE").trim().toUpperCase();
+    <form id="formulario-ingreso">
+      <label for="codigo">Código de sala</label>
+      <input id="codigo" name="codigo" required maxlength="6"
+             pattern="[A-Za-z0-9]{6}" placeholder="A1B2C3" autocomplete="off">
+      <button type="submit">Unirse con código</button>
+    </form>
+  </section>
 
-    // Pasamos el código de la página a la conexión WebSocket.
-    const socket = new WebSocket(
-    `${protocolo}//${location.host}/ws?sala=${encodeURIComponent(codigoSala)}`
-);
+  <!-- La recuperación sirve tanto antes como después de iniciar la partida. -->
+  <section id="recuperar-partida" hidden>
+    <h2 id="titulo-recuperacion"></h2>
+    <p id="detalle-partida"></p>
+    <button id="reconectar" type="button">Reconectar</button>
+    <button id="abandonar" type="button">Abandonar</button>
+  </section>
 
-    socket.addEventListener("open", () => {
-      estado.textContent = `Conectado a la sala ${codigoSala}`;
-      boton.disabled = false;
-    });
+  <section id="mesa" hidden>
+    <h2 id="titulo-sala"></h2>
+    <p id="cantidad-jugadores" role="status"></p>
+    <ul id="lista-jugadores" aria-label="Jugadores"></ul>
 
-    socket.addEventListener("close", () => {
-      estado.textContent = "Desconectado";
-      boton.disabled = true;
-    });
+    <!-- El servidor determina cuál de estas dos áreas se muestra. -->
+    <section id="lobby">
+      <button id="iniciar-partida" type="button" disabled>Iniciar partida</button>
+      <h3>Chat de la sala</h3>
+      <ul id="chat" aria-live="polite"></ul>
+      <form id="formulario-chat">
+        <label for="mensaje-chat">Mensaje</label>
+        <input id="mensaje-chat" required maxlength="200" autocomplete="off">
+        <button type="submit">Enviar</button>
+      </form>
+    </section>
 
-    boton.addEventListener("click", () => {
-      socket.send("tirar-bola");
-    });
-
-    socket.addEventListener("message", (evento) => {
-      const jugada = document.createElement("li");
-      jugada.textContent = evento.data;
-      actividad.append(jugada);
-    });
-  </script>
+    <section id="partida" hidden>
+      <button id="tirar" type="button">Tirar Bola de nieve</button>
+      <h3>Actividad</h3>
+      <ul id="actividad" aria-live="polite"></ul>
+    </section>
+  </section>
 </body>
 </html>
