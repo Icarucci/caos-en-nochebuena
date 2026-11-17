@@ -107,6 +107,13 @@ public class JuegoWebSocket extends TextWebSocketHandler {
         }
 
         if ("abandonar".equals(accion)) {
+            Partida partida = registroSalas.partidaDe(codigoSala);
+            if (partida != null) {
+                // Siempre comprobamos el resultado después de un abandono,
+                // aunque todavía queden confirmaciones pendientes.
+                partida.registrarAbandono(identificador);
+                avisarPreparacionSala(codigoSala);
+            }
             jugadores.remove(identificador);
             cerrarConexion(anterior.conexion(), new CloseStatus(4011, "Sala abandonada"));
             avisarJugadores(codigoSala);
@@ -134,6 +141,8 @@ public class JuegoWebSocket extends TextWebSocketHandler {
 
         if (registroSalas.estaIniciada(codigoSala)) {
             enviar(jugador, "partida-iniciada");
+            // Al reconectar, recuperamos el rol que ya estaba asignado.
+            enviarRolPropio(identificador, jugador);
             enviar(jugador, "historial:" + String.join("\n",
                     historialPorSala.getOrDefault(codigoSala, List.of())));
         } else {
@@ -171,11 +180,40 @@ public class JuegoWebSocket extends TextWebSocketHandler {
 
         // Después del inicio se procesan jugadas públicas.
         if (registroSalas.estaIniciada(codigoSala)) {
-            if ("tirar-bola".equals(texto)) {
-                String jugada = jugador.nombre() + " tiró una Bola de nieve ❄️";
-                historialPorSala.computeIfAbsent(codigoSala, clave -> new ArrayList<>()).add(jugada);
-                enviarASala(codigoSala, "actividad:" + jugada);
+            Partida partida = registroSalas.partidaDe(codigoSala);
+            String identificador = buscarIdentificador(origen);
+            if (texto.startsWith("elegir-habilidad:")) {
+                String nombreHabilidad = texto.substring("elegir-habilidad:".length());
+
+                try {
+                    Habilidad habilidad = Habilidad.valueOf(nombreHabilidad);
+
+                    // Partida valida la etapa, las opciones asignadas y que no haya elegido antes.
+                    partida.elegirHabilidad(identificador, habilidad);
+
+                    // Todos reciben su estado privado actualizado al confirmar una elección.
+                    avisarPreparacionSala(codigoSala);
+                } catch (IllegalArgumentException error) {
+                    // Si el identificador no existe, conservamos el estado actual.
+                    enviarEstadoPreparacion(identificador, jugador);
+                }
+
+                return;
             }
+
+            if ("confirmar-rol".equals(texto)) {
+                // Cada jugador confirma su propio rol.
+                // Partida evita contar dos veces al mismo jugador.
+                partida.confirmarRol(identificador);
+                enviarEstadoPreparacion(identificador, jugador);
+
+                if (partida.getFase() == Partida.Fase.ELECCION_DE_HABILIDAD) {
+                    // Actualizamos la etapa y las opciones privadas de quienes siguen en la sala.
+                    avisarPreparacionSala(codigoSala);
+                }
+            }
+
+            // Durante estas etapas, el servidor espera las confirmaciones.
             return;
         }
 
@@ -190,13 +228,99 @@ public class JuegoWebSocket extends TextWebSocketHandler {
                 enviarASala(codigoSala, "chat:" + linea);
             }
         } else if ("iniciar-partida".equals(texto)
-                && buscarAnfitrion(codigoSala) == jugador
-                && contarConectados(codigoSala) >= MIN_JUGADORES
-                && registroSalas.iniciar(codigoSala)) {
-            // El mínimo se comprueba con conexiones activas. Los asientos
-            // reservados se conservan para que esos jugadores puedan volver.
-            enviarASala(codigoSala, "partida-iniciada");
-            avisarJugadores(codigoSala);
+            && buscarAnfitrion(codigoSala) == jugador
+            && contarConectados(codigoSala) >= MIN_JUGADORES) {
+            iniciarPartida(codigoSala);
+            }
+    }
+
+    private void iniciarPartida(String codigoSala) {
+        // El reparto incluye a quienes tienen un asiento reservado en la sala.
+        List<String> participantes = jugadores.entrySet().stream()
+                .filter(entrada -> codigoSala.equals(entrada.getValue().codigoSala()))
+                .map(Map.Entry::getKey)
+                .toList();
+
+        if (!registroSalas.iniciar(codigoSala, participantes)) {
+            return;
+        }
+
+        enviarASala(codigoSala, "partida-iniciada");
+
+        for (String identificador : participantes) {
+            enviarRolPropio(identificador, jugadores.get(identificador));
+        }
+
+        avisarJugadores(codigoSala);
+    }
+
+    private void enviarEstadoPreparacion(String identificador, Jugador jugador) {
+        Partida partida = registroSalas.partidaDe(jugador.codigoSala());
+        if (partida.getFase() == Partida.Fase.TERMINADA) {
+            // Cada jugador recibe el resultado junto con su propia condición de victoria.
+            Rol rol = partida.rolDe(identificador);
+            ResultadoPartida resultado = partida.getResultado();
+
+            boolean gano = switch (resultado) {
+                case VICTORIA_PAPA_NOEL ->
+                        rol == Rol.PAPA_NOEL || rol == Rol.RODOLFO || rol == Rol.ELFO;
+                case VICTORIA_LADRONES ->
+                        rol == Rol.LADRON || rol == Rol.ARREPENTIDO;
+                case VICTORIA_KRAMPUS -> rol == Rol.KRAMPUS;
+                default -> false;
+            };
+
+            enviar(jugador, "partida-terminada:" + resultado.name() + "\n" + gano);
+            return;
+        }
+
+        enviar(jugador, "rol-confirmado:" + partida.confirmoRol(identificador));
+        enviar(jugador, "fase:" + partida.getFase().name());
+
+        Habilidad elegida = partida.habilidadDe(identificador);
+
+        if (elegida != null) {
+            // La habilidad elegida se recupera también después de completar la preparación.
+            enviar(jugador, "habilidad-elegida:"
+                    + elegida.name() + "\n"
+                    + elegida.getNombre() + "\n"
+                    + elegida.getDescripcion());
+        } else if (partida.getFase() == Partida.Fase.ELECCION_DE_HABILIDAD) {
+            String opciones = partida.opcionesDe(identificador).stream()
+                    .map(habilidad -> habilidad.name() + "\n"
+                            + habilidad.getNombre() + "\n"
+                            + habilidad.getDescripcion())
+                    .collect(java.util.stream.Collectors.joining("\n"));
+
+            enviar(jugador, "opciones-habilidad:" + opciones);
+        }
+    }
+
+    private void avisarPreparacionSala(String codigoSala) {
+        Partida partida = registroSalas.partidaDe(codigoSala);
+
+        // Antes de avanzar, comprobamos si los participantes ya determinan un ganador.
+        partida.evaluarResultado();
+
+        for (var entrada : jugadores.entrySet()) {
+            Jugador jugador = entrada.getValue();
+
+            if (codigoSala.equals(jugador.codigoSala())) {
+                enviarEstadoPreparacion(entrada.getKey(), jugador);
+            }
+        }
+    }
+
+    private void enviarRolPropio(String identificador, Jugador jugador) {
+        Rol rol = registroSalas.rolDe(jugador.codigoSala(), identificador);
+
+        if (rol != null) {
+            // Enviamos este mensaje solo a la conexión del jugador dueño del rol.
+            enviar(jugador, "rol-propio:" + rol.getNombre()
+                    + "\n" + rol.getVidasIniciales()
+                    + "\n" + rol.getObjetivo());
+                    // Al iniciar o reconectar, recuperamos también la etapa y la confirmación.
+                    enviarEstadoPreparacion(identificador, jugador);
         }
     }
 
@@ -267,6 +391,19 @@ public class JuegoWebSocket extends TextWebSocketHandler {
         Jugador anfitrion = iniciada ? null : buscarAnfitrion(codigoSala);
         boolean hayQuorum = !iniciada && contarConectados(codigoSala) >= MIN_JUGADORES;
         String lista = "jugadores:" + String.join("\n", estados);
+
+        if (iniciada) {
+            // Papá Noel es el único rol que anunciamos a toda la mesa al iniciar.
+            String nombrePapaNoel = jugadores.entrySet().stream()
+                    .filter(entrada -> codigoSala.equals(entrada.getValue().codigoSala()))
+                    .filter(entrada -> registroSalas.rolDe(codigoSala, entrada.getKey()) == Rol.PAPA_NOEL)
+                    .map(entrada -> entrada.getValue().nombre())
+                    .findFirst()
+                    .orElse("");
+
+            // Mandamos el nombre antes de la lista para que el navegador pueda marcarlo.
+            enviarASala(codigoSala, "papa-noel:" + nombrePapaNoel);
+        }
 
         for (Jugador jugador : jugadoresDeSala) {
             if (!iniciada) {

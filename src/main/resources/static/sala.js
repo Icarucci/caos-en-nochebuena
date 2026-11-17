@@ -24,6 +24,7 @@ let socket;
 let jugador;
 let iniciada = false;
 let soyAnfitrion = false;
+let nombrePapaNoel = "";
 
 // Guardamos una copia por pestaña y otra por sala y nombre dentro del navegador.
 // Así podemos probar varios nombres en pestañas del mismo navegador.
@@ -55,14 +56,54 @@ function borrarSesion(sesion) {
   }
 }
 
-function mostrarRecuperacion(sesion) {
+async function mostrarRecuperacion(sesion) {
   jugador = sesion;
   mesa.hidden = true;
-  panelRecuperar.hidden = false;
-  porId("titulo-recuperacion").textContent = sesion.iniciada
-    ? "Tenés una partida en curso"
-    : "Tenés una sala de espera guardada";
-  porId("detalle-partida").textContent = `${sesion.nombre} · Sala ${sesion.codigo}`;
+  panelRecuperar.hidden = true;
+  estado.textContent = "Comprobando la sala guardada…";
+
+  try {
+    // Consultamos al servidor antes de ofrecer recuperar la partida.
+    const respuesta = await fetch(
+      `/api/salas/${encodeURIComponent(sesion.codigo)}/existe`,
+      { cache: "no-store" }
+    );
+
+    if (!respuesta.ok) {
+      throw new Error(`El servidor respondió con ${respuesta.status}`);
+    }
+
+    const existe = await respuesta.json();
+
+    if (!existe) {
+      // El servidor perdió la sala, por ejemplo, después de un reinicio.
+      // Quitamos también su acceso guardado en este navegador.
+      borrarSesion(sesion);
+      jugador = null;
+      acceso.hidden = false;
+      campoCodigo.value = "";
+      history.replaceState(null, "", location.pathname);
+      estado.textContent = "La sala anterior ya no existe. Podés crear otra.";
+      return;
+    }
+
+    // Solo mostramos los botones después de confirmar que la sala existe.
+    panelRecuperar.hidden = false;
+    porId("titulo-recuperacion").textContent = sesion.iniciada
+      ? "Tenés una partida en curso"
+      : "Tenés una sala de espera guardada";
+
+    porId("detalle-partida").textContent =
+      `${sesion.nombre} · Sala ${sesion.codigo}`;
+
+    estado.textContent = "Tu lugar está guardado. Podés reconectar o abandonar.";
+  } catch (error) {
+    // Si falla la conexión, conservamos los datos para poder intentar después.
+    console.error(error);
+    acceso.hidden = false;
+    estado.textContent =
+      "No se pudo comprobar la sala. Revisá que el servidor esté encendido y recargá.";
+  }
 }
 
 function marcarUrl(codigo) {
@@ -125,8 +166,15 @@ function conectar(sesion, accion) {
   jugador = sesion;
   iniciada = false;
   soyAnfitrion = false;
+  // Limpiamos el nombre al abrir una conexión.
+  nombrePapaNoel = "";
   panelRecuperar.hidden = true;
   acceso.hidden = true;
+  // Ocultamos el rol y las habilidades mientras se establece la conexión.
+  porId("rol-privado").hidden = true;
+  porId("seleccion-habilidad").hidden = true;
+  porId("opciones-habilidad").replaceChildren();
+  porId("habilidad-confirmada").textContent = "";
   mesa.hidden = true;
   botonIniciar.disabled = true;
   estado.textContent = accion === "abandonar" ? "Abandonando…" : "Conectando…";
@@ -152,6 +200,114 @@ function conectar(sesion, accion) {
     }
 
     const mensaje = evento.data;
+    if (mensaje.startsWith("partida-terminada:")) {
+      const [resultado, gano] =
+        mensaje.slice("partida-terminada:".length).split("\n");
+
+      const explicaciones = {
+        VICTORIA_PAPA_NOEL: "Ganó el bando de Papá Noel.",
+        VICTORIA_LADRONES: "Ganaron los Ladrones y el Arrepentido.",
+        VICTORIA_KRAMPUS: "Ganó Krampus.",
+        SIN_PARTICIPANTES: "La partida terminó sin participantes.",
+      };
+
+      // Cerramos los controles de preparación y mostramos el resultado privado.
+      porId("confirmar-rol").hidden = true;
+      porId("seleccion-habilidad").hidden = true;
+      porId("tirar").hidden = true;
+
+      estado.textContent = explicaciones[resultado];
+      porId("estado-confirmacion").textContent =
+        resultado === "SIN_PARTICIPANTES"
+          ? "La sala quedó vacía."
+          : gano === "true" ? "¡Ganaste!" : "Perdiste.";
+      return;
+    }
+    if (mensaje.startsWith("opciones-habilidad:")) {
+      const datos = mensaje.slice("opciones-habilidad:".length).split("\n");
+      const contenedor = porId("opciones-habilidad");
+      contenedor.replaceChildren();
+
+      // Cada opción llega como identificador, nombre y descripción.
+      for (let posicion = 0; posicion < datos.length; posicion += 3) {
+        const identificador = datos[posicion];
+        const nombre = datos[posicion + 1];
+        const descripcion = datos[posicion + 2];
+
+        const opcion = document.createElement("div");
+
+        const titulo = document.createElement("h4");
+        titulo.textContent = nombre;
+
+        const explicacion = document.createElement("p");
+        explicacion.textContent = descripcion;
+
+        const boton = document.createElement("button");
+        boton.type = "button";
+        boton.textContent = `Elegir ${nombre}`;
+
+        // Mandamos el identificador. Java comprueba que sea una opción asignada.
+        boton.addEventListener("click", () => {
+          enviar(`elegir-habilidad:${identificador}`);
+        });
+
+        opcion.append(titulo, explicacion, boton);
+        contenedor.append(opcion);
+      }
+
+      porId("habilidad-confirmada").textContent = "";
+      porId("seleccion-habilidad").hidden = false;
+      return;
+    }
+
+  if (mensaje.startsWith("habilidad-elegida:")) {
+    const [, nombre, descripcion] =
+      mensaje.slice("habilidad-elegida:".length).split("\n");
+
+    // Solo reemplazamos las opciones después de la confirmación del servidor.
+    porId("opciones-habilidad").replaceChildren();
+    porId("habilidad-confirmada").textContent =
+      `Elegiste ${nombre}. ${descripcion}`;
+
+    porId("seleccion-habilidad").hidden = false;
+    return;
+  }
+    if (mensaje.startsWith("rol-confirmado:")) {
+      const confirmado = mensaje === "rol-confirmado:true";
+
+      porId("confirmar-rol").disabled = confirmado;
+      porId("estado-confirmacion").textContent = confirmado
+        ? "Confirmaste tu rol. Esperando a los demás…"
+        : "Leé tu objetivo y tocá Continuar.";
+      return;
+    }
+
+    if (mensaje.startsWith("fase:")) {
+      const fase = mensaje.slice("fase:".length);
+
+      // El servidor controla cuándo termina cada etapa.
+      porId("tirar").hidden = true;
+      porId("confirmar-rol").hidden = fase !== "REPARTO_DE_ROLES";
+
+      if (fase === "ELECCION_DE_HABILIDAD") {
+        porId("estado-confirmacion").textContent =
+          "Elegí tu habilidad. Esperamos a que todos confirmen su elección.";
+      } else if (fase === "PREPARACION_COMPLETA") {
+        porId("estado-confirmacion").textContent =
+          "¡Todos eligieron! La preparación está completa.";
+      }
+      return;
+    }
+    if (mensaje.startsWith("rol-propio:")) {
+      // Java envía el nombre, las vidas iniciales y el objetivo en ese orden.
+      const [nombreRol, vidas, objetivo] = mensaje.slice("rol-propio:".length).split("\n");
+
+      porId("rol-nombre").textContent = `Tu rol: ${nombreRol}`;
+      porId("rol-objetivo").textContent = objetivo;
+      porId("rol-vidas").textContent = `Vidas iniciales: ${vidas}`;
+      porId("rol-privado").hidden = false;
+      return;
+    }
     if (mensaje.startsWith("identificador:")) {
       jugador.identificador = mensaje.slice("identificador:".length);
     } else if (mensaje === "sala-abandonada") {
@@ -186,6 +342,8 @@ function conectar(sesion, accion) {
       soyAnfitrion = mensaje === "anfitrion:true";
     } else if (mensaje.startsWith("puede-iniciar:")) {
       botonIniciar.disabled = mensaje !== "puede-iniciar:true";
+    } else if (mensaje.startsWith("papa-noel:")) {
+      nombrePapaNoel = mensaje.slice("papa-noel:".length);
     } else if (mensaje.startsWith("jugadores:")) {
       mostrarJugadores(mensaje.slice("jugadores:".length));
     } else if (mensaje.startsWith("chat-historial:")) {
@@ -262,6 +420,10 @@ function mostrarJugadores(texto) {
   const elementos = filas.map((fila, posicion) => {
     const nombre = fila.slice(2);
     const elemento = crearLinea(nombre);
+    // Identificamos a Papá Noel en la lista pública de jugadores.
+    if (iniciada && nombre === nombrePapaNoel) {
+      elemento.append(" — Papá Noel");
+    }
     if (fila.startsWith("0:")) {
       elemento.append(" — Desconectado");
     }
@@ -292,6 +454,11 @@ function enviar(mensaje) {
   }
   return false;
 }
+
+// El botón solicita la confirmación. Java comprueba quién la envía.
+porId("confirmar-rol").addEventListener("click", () => {
+  enviar("confirmar-rol");
+});
 
 botonIniciar.addEventListener("click", () => enviar("iniciar-partida"));
 porId("tirar").addEventListener("click", () => {
