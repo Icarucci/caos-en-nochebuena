@@ -13,6 +13,8 @@ public class RegistroSalas {
     // Guardamos las salas en memoria mientras el servidor está encendido.
     // El conjunto permite crear y consultar salas desde varias conexiones.
     private final Set<String> codigos = ConcurrentHashMap.newKeySet();
+    // Registramos cuáles de las salas creadas ya iniciaron la partida.
+    private final Set<String> salasIniciadas = ConcurrentHashMap.newKeySet();
 
     public String crear() {
         String codigo;
@@ -31,5 +33,14 @@ public class RegistroSalas {
 
     public boolean existe(String codigo) {
         return codigos.contains(codigo);
+    }
+
+    public boolean estaIniciada(String codigo) {
+        return salasIniciadas.contains(codigo);
+    }
+
+    public boolean iniciar(String codigo) {
+        // add devuelve false si la sala ya se había iniciado.
+        return existe(codigo) && salasIniciadas.add(codigo);
     }
 }

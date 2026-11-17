@@ -8,29 +8,53 @@
 </head>
 <body>
   <h1>Caos en Nochebuena</h1>
+  <p id="estado" role="status">Creá una sala o ingresá un código.</p>
 
-  <!-- Pantalla inicial para crear una sala o entrar con un código. -->
-  <section>
+  <!-- El mismo nombre se usa para crear una sala o entrar con un código. -->
+  <section id="acceso">
+    <label for="nombre">Tu nombre</label>
+    <input id="nombre" name="nombre" form="formulario-ingreso"
+           required maxlength="20" placeholder="Ignacio">
     <button id="crear-sala" type="button">Crear sala privada</button>
 
     <form id="formulario-ingreso">
       <label for="codigo">Código de sala</label>
-      <input id="codigo" name="codigo" required
-             maxlength="6" pattern="[A-Za-z0-9]{6}"
-             placeholder="A1B2C3" autocomplete="off">
+      <input id="codigo" name="codigo" required maxlength="6"
+             pattern="[A-Za-z0-9]{6}" placeholder="A1B2C3" autocomplete="off">
       <button type="submit">Unirse con código</button>
     </form>
-
-    <p id="estado" role="status">Creá una sala o ingresá un código.</p>
   </section>
 
-  <!-- La mesa se muestra cuando Java confirma el ingreso. -->
+  <!-- La recuperación sirve tanto antes como después de iniciar la partida. -->
+  <section id="recuperar-partida" hidden>
+    <h2 id="titulo-recuperacion"></h2>
+    <p id="detalle-partida"></p>
+    <button id="reconectar" type="button">Reconectar</button>
+    <button id="abandonar" type="button">Abandonar</button>
+  </section>
+
   <section id="mesa" hidden>
     <h2 id="titulo-sala"></h2>
     <p id="cantidad-jugadores" role="status"></p>
-    <button id="tirar" type="button" disabled>Tirar Bola de nieve</button>
-    <h3>Actividad</h3>
-    <ul id="actividad"></ul>
+    <ul id="lista-jugadores" aria-label="Jugadores"></ul>
+
+    <!-- El servidor determina cuál de estas dos áreas se muestra. -->
+    <section id="lobby">
+      <button id="iniciar-partida" type="button" disabled>Iniciar partida</button>
+      <h3>Chat de la sala</h3>
+      <ul id="chat" aria-live="polite"></ul>
+      <form id="formulario-chat">
+        <label for="mensaje-chat">Mensaje</label>
+        <input id="mensaje-chat" required maxlength="200" autocomplete="off">
+        <button type="submit">Enviar</button>
+      </form>
+    </section>
+
+    <section id="partida" hidden>
+      <button id="tirar" type="button">Tirar Bola de nieve</button>
+      <h3>Actividad</h3>
+      <ul id="actividad" aria-live="polite"></ul>
+    </section>
   </section>
 </body>
 </html>
