@@ -14,7 +14,7 @@
   <section id="acceso">
     <label for="nombre">Tu nombre</label>
     <input id="nombre" name="nombre" form="formulario-ingreso"
-           required maxlength="20" placeholder="Ignacio">
+           required maxlength="20" placeholder="Ingresar nombre...">
     <button id="crear-sala" type="button">Crear sala privada</button>
 
     <form id="formulario-ingreso">
@@ -51,6 +51,21 @@
     </section>
 
     <section id="partida" hidden>
+      <!-- Esta ficha muestra únicamente el rol recibido por esta pestaña. -->
+      <section id="rol-privado" hidden>
+        <h3 id="rol-nombre"></h3>
+        <p id="rol-objetivo"></p>
+        <p id="rol-vidas"></p>
+        <!-- El servidor decide cuándo todos pueden pasar a la siguiente etapa. -->
+        <button id="confirmar-rol" type="button">Continuar</button>
+        <p id="estado-confirmacion" role="status"></p>
+        <!-- Las opciones se muestran cuando todos confirmaron su rol. -->
+        <section id="seleccion-habilidad" hidden>
+          <h3>Elegí tu habilidad</h3>
+          <div id="opciones-habilidad"></div>
+          <p id="habilidad-confirmada" role="status"></p>
+        </section>
+      </section>
       <button id="tirar" type="button">Tirar Bola de nieve</button>
       <h3>Actividad</h3>
       <ul id="actividad" aria-live="polite"></ul>
