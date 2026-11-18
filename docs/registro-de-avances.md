@@ -63,3 +63,30 @@
 
 Los efectos de las habilidades, el reparto de cartas y los turnos
 están pendientes de implementar.
+
+### Salas públicas y privadas
+
+- Incorporamos la elección del tipo de sala al crearla.
+- Las salas privadas permiten ingresar mediante un código.
+- Las salas públicas aparecen en un listado con su ocupación y estado.
+- El botón de ingreso se deshabilita cuando la sala está llena o la partida comenzó.
+- Al ingresar a otra sala, se abandona la anterior.
+- Las salas sin jugadores se eliminan inmediatamente.
+- Si todos sus jugadores permanecen desconectados durante 5 minutos,
+  la sala se elimina automáticamente.
+- Una reconexión antes del vencimiento cancela la eliminación.
+
+#### Verificación manual
+
+- Creación e ingreso a salas públicas y privadas.
+- Control del máximo de 8 jugadores.
+- Cambio de sala sin mantener el asiento anterior.
+- Eliminación de salas vacías.
+- Eliminación por desconexión y cancelación al reconectarse.
+
+#### Detalles técnicos
+
+- Habilitamos tareas programadas con ConfiguracionDeTareas.
+- La limpieza se ejecuta cada 10 segundos mediante @Scheduled.
+- Las operaciones sobre los jugadores y la limpieza comparten
+  el bloqueo synchronized para evitar modificaciones simultáneas.
