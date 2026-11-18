@@ -6,21 +6,25 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestParam;
 
 @RestController
 public class SalasController {
 
     private final RegistroSalas registroSalas;
+    private final JuegoWebSocket juegoWebSocket;
 
-    public SalasController(RegistroSalas registroSalas) {
+    public SalasController(RegistroSalas registroSalas,JuegoWebSocket juegoWebSocket) {
         this.registroSalas = registroSalas;
+        this.juegoWebSocket = juegoWebSocket;
     }
 
-    // Este endpoint será el que use el botón «Crear sala».
+    // Recibimos el tipo elegido. Si no se envía, usamos PRIVADA.
     @PostMapping("/api/salas")
     @ResponseStatus(HttpStatus.CREATED)
-    public SalaCreada crearSala() {
-        return new SalaCreada(registroSalas.crear());
+    public SalaCreada crearSala(
+            @RequestParam(name = "tipo", defaultValue = "PRIVADA") TipoSala tipo) {
+        return new SalaCreada(registroSalas.crear(tipo));
     }
 
     // Spring convierte este resultado en un JSON con el campo "codigo".
@@ -30,5 +34,11 @@ public class SalasController {
     @GetMapping("/api/salas/{codigo}/existe")
     public boolean existeSala(@PathVariable("codigo") String codigo) {
         return registroSalas.existe(codigo);
+    }
+
+    // La página consulta este endpoint para mostrar las salas públicas.
+    @GetMapping("/api/salas/publicas")
+    public java.util.List<JuegoWebSocket.SalaPublica> listarPublicas() {
+        return juegoWebSocket.listarSalasPublicas();
     }
 }

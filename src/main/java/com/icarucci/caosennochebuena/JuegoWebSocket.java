@@ -9,6 +9,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.time.Duration;
 
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
@@ -16,12 +17,21 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 import org.springframework.web.util.UriComponentsBuilder;
+import org.springframework.scheduling.annotation.Scheduled;
 
 @Component
 public class JuegoWebSocket extends TextWebSocketHandler {
 
     private static final int MIN_JUGADORES = 4;
     private static final int MAX_JUGADORES = 8;
+    // Tiempo que conservamos una sala sin jugadores conectados.
+    private static final long TIEMPO_SIN_CONEXIONES =
+            Duration.ofMinutes(5).toNanos();
+
+    // Guarda desde cuándo cada sala está sin conexiones.
+    // Usamos nanoTime para medir tiempo transcurrido sin depender
+    // de los cambios de fecha u hora del servidor.
+    private final Map<String, Long> sinConexionesDesde = new LinkedHashMap<>();
     private final RegistroSalas registroSalas;
 
     // La clave identifica al jugador aunque cambie su conexión.
@@ -91,6 +101,46 @@ public class JuegoWebSocket extends TextWebSocketHandler {
         }
 
         registrar(UUID.randomUUID().toString(), new Jugador(codigoSala, nombre, conexion));
+        // Solo abandonamos la sala anterior después de aceptar la nueva conexión.
+        if (conexion.isOpen()) {
+            abandonarSalaAnterior(
+                    parametros.getFirst("salaAnterior"),
+                    parametros.getFirst("identificadorAnterior"),
+                    codigoSala);
+        }
+    }
+
+    private void abandonarSalaAnterior(String codigoAnterior, String identificadorAnterior, String codigoNuevo) {
+        if (codigoAnterior == null || identificadorAnterior == null
+                || codigoAnterior.equals(codigoNuevo)) {
+            return;
+        }
+
+        Jugador anterior = jugadores.get(identificadorAnterior);
+
+        // Verificamos el acceso anterior antes de retirar ese asiento.
+        if (anterior == null || !codigoAnterior.equals(anterior.codigoSala())) {
+            return;
+        }
+
+        Partida partida = registroSalas.partidaDe(codigoAnterior);
+
+        if (partida != null) {
+            // Cambiar de sala cuenta como abandonar la partida anterior.
+            partida.registrarAbandono(identificadorAnterior);
+        }
+
+        jugadores.remove(identificadorAnterior);
+        cerrarConexion(
+                anterior.conexion(),
+                new CloseStatus(4011, "El jugador cambio de sala"));
+
+        if (partida != null) {
+            avisarPreparacionSala(codigoAnterior);
+        }
+
+        // Actualizamos los lugares ocupados y el anfitrión de la sala anterior.
+        avisarJugadores(codigoAnterior);
     }
 
     private void recuperarSesion(WebSocketSession conexion, String codigoSala,
@@ -381,7 +431,66 @@ public class JuegoWebSocket extends TextWebSocketHandler {
                 .orElse(null);
     }
 
+    public synchronized List<SalaPublica> listarSalasPublicas() {
+        // Consultamos el listado con el mismo bloqueo que usamos al entrar o salir.
+        // Así, los contadores corresponden al estado actual de las salas.
+        return registroSalas.codigosPublicos().stream()
+                .filter(codigo -> {
+                    Partida partida = registroSalas.partidaDe(codigo);
+
+                    // Las partidas terminadas dejan de aparecer en el listado.
+                    return partida == null
+                            || partida.getFase() != Partida.Fase.TERMINADA;
+                })
+                .map(codigo -> {
+                    Jugador anfitrion = buscarAnfitrion(codigo);
+
+                    return new SalaPublica(
+                            codigo,
+                            anfitrion == null ? "" : anfitrion.nombre(),
+                            jugadoresEnSala(codigo).size(),
+                            contarConectados(codigo),
+                            registroSalas.estaIniciada(codigo)
+                                    ? "EN_PARTIDA"
+                                    : "EN_ESPERA");
+                })
+                .toList();
+    }
+
+    // Estos son los datos públicos del listado. Los roles y las habilidades
+    // pendientes de elegir quedan fuera de esta respuesta.
+    public record SalaPublica(
+            String codigo,
+            String anfitrion,
+            int ocupados,
+            long conectados,
+            String estado) {
+    }
+
     private void avisarJugadores(String codigoSala) {
+        // Sin asientos reservados, la sala se elimina inmediatamente.
+        if (jugadoresEnSala(codigoSala).isEmpty()) {
+            registroSalas.eliminar(codigoSala);
+            chatPorSala.remove(codigoSala);
+            historialPorSala.remove(codigoSala);
+            sinConexionesDesde.remove(codigoSala);
+
+            // Eliminamos también los accesos invalidados de esta sala.
+            salaPorIdentificadorExpulsado.entrySet().removeIf(
+                    entrada -> codigoSala.equals(entrada.getValue()));
+
+            return;
+        }
+
+        if (contarConectados(codigoSala) == 0) {
+            // Solo registramos la primera desconexión total.
+            // Las actualizaciones posteriores no reinician la espera.
+            sinConexionesDesde.putIfAbsent(codigoSala, System.nanoTime());
+        } else {
+            // Si alguien entra o se reconecta, cancelamos la cuenta.
+            sinConexionesDesde.remove(codigoSala);
+        }
+
         boolean iniciada = registroSalas.estaIniciada(codigoSala);
         List<Jugador> jugadoresDeSala = jugadoresEnSala(codigoSala);
         List<String> estados = jugadoresDeSala.stream()
@@ -414,6 +523,36 @@ public class JuegoWebSocket extends TextWebSocketHandler {
             if (!iniciada) {
                 enviar(jugador, "puede-iniciar:" + (jugador == anfitrion && hayQuorum));
             }
+        }
+    }
+
+    // Spring revisa las salas cada 10 segundos.
+    // El bloqueo synchronized evita eliminar una sala mientras
+    // otra operación está registrando una reconexión.
+    @Scheduled(fixedDelay = 10_000)
+    public synchronized void eliminarSalasSinConexiones() {
+        long ahora = System.nanoTime();
+
+        // Recorremos una copia porque la limpieza modifica el mapa original.
+        for (String codigoSala : new ArrayList<>(sinConexionesDesde.keySet())) {
+            if (contarConectados(codigoSala) > 0) {
+                sinConexionesDesde.remove(codigoSala);
+                continue;
+            }
+
+            long desde = sinConexionesDesde.get(codigoSala);
+
+            if (ahora - desde < TIEMPO_SIN_CONEXIONES) {
+                continue;
+            }
+
+            // Venció el plazo: liberamos todos los asientos reservados.
+            jugadores.entrySet().removeIf(
+                    entrada -> codigoSala.equals(entrada.getValue().codigoSala()));
+
+            // Reutilizamos la limpieza existente para eliminar
+            // la sala, la partida, los historiales y el temporizador.
+            avisarJugadores(codigoSala);
         }
     }
 

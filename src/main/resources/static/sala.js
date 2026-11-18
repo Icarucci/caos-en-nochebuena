@@ -133,7 +133,14 @@ botonCrear.addEventListener("click", async () => {
 
   botonCrear.disabled = true;
   try {
-    const respuesta = await fetch("/api/salas", { method: "POST" });
+    // Enviamos a Java el tipo seleccionado antes de crear la sala.
+    const parametros = new URLSearchParams({
+      tipo: porId("tipo-sala").value,
+    });
+
+    const respuesta = await fetch(`/api/salas?${parametros}`, {
+      method: "POST",
+    });
     if (!respuesta.ok) {
       throw new Error(`El servidor respondió con ${respuesta.status}`);
     }
@@ -163,6 +170,8 @@ porId("reconectar").addEventListener("click", () => conectar(jugador, "reconecta
 porId("abandonar").addEventListener("click", () => conectar(jugador, "abandonar"));
 
 function conectar(sesion, accion) {
+  // Recordamos el asiento anterior antes de reemplazar al jugador actual.
+  const sesionAnterior = jugador;
   jugador = sesion;
   iniciada = false;
   soyAnfitrion = false;
@@ -170,6 +179,7 @@ function conectar(sesion, accion) {
   nombrePapaNoel = "";
   panelRecuperar.hidden = true;
   acceso.hidden = true;
+  porId("salas-publicas").hidden = true;
   // Ocultamos el rol y las habilidades mientras se establece la conexión.
   porId("rol-privado").hidden = true;
   porId("seleccion-habilidad").hidden = true;
@@ -181,6 +191,12 @@ function conectar(sesion, accion) {
 
   const protocolo = location.protocol === "https:" ? "wss:" : "ws:";
   const consulta = new URLSearchParams({ sala: sesion.codigo, nombre: sesion.nombre });
+  // Si cambiamos de sala, Java recibe el acceso del asiento que debe liberar.
+  // La salida se procesa después de aceptar el ingreso a la nueva sala.
+  if (sesionAnterior?.identificador && sesionAnterior.codigo !== sesion.codigo) {
+    consulta.set("salaAnterior", sesionAnterior.codigo);
+    consulta.set("identificadorAnterior", sesionAnterior.identificador);
+  }
   if (accion) {
     consulta.set("accion", accion);
     consulta.set("identificador", sesion.identificador);
@@ -365,6 +381,7 @@ function conectar(sesion, accion) {
     socket = null;
     mesa.hidden = true;
     acceso.hidden = false;
+    porId("salas-publicas").hidden = false;
 
     const mensajes = {
       1008: "La sala o el acceso guardado ya no están disponibles.",
@@ -522,3 +539,71 @@ if (sesionPestana && (!codigoEnUrl || codigoEnUrl === sesionPestana.codigo)) {
 } else {
   estado.textContent = "Escribí tu nombre y tocá Unirse con código.";
 }
+
+async function actualizarSalasPublicas() {
+  const botonActualizar = porId("actualizar-salas");
+  const lista = porId("lista-salas-publicas");
+  const estadoSalas = porId("estado-salas");
+
+  botonActualizar.disabled = true;
+  estadoSalas.textContent = "Buscando salas…";
+
+  try {
+    const respuesta = await fetch("/api/salas/publicas", {
+      cache: "no-store",
+    });
+
+    if (!respuesta.ok) {
+      throw new Error(`El servidor respondió con ${respuesta.status}`);
+    }
+
+    const salas = await respuesta.json();
+
+    const elementos = salas.map((sala) => {
+      const elemento = document.createElement("li");
+      const enEspera = sala.estado === "EN_ESPERA";
+
+      // Mostramos los lugares ocupados, incluidos los reservados.
+      elemento.textContent =
+        `Sala de ${sala.anfitrion || "un jugador"} · ${sala.ocupados}/8 · `
+        + (enEspera ? "En espera" : "En partida");
+
+      const boton = document.createElement("button");
+      boton.type = "button";
+      boton.textContent = "Unirse";
+      boton.disabled = !enEspera || sala.ocupados >= 8;
+
+      boton.addEventListener("click", () => {
+        const nombre = campoNombre.value.trim();
+
+        if (!campoNombre.reportValidity() || !nombre) {
+          estadoSalas.textContent = "Escribí tu nombre antes de unirte.";
+          campoNombre.focus();
+          return;
+        }
+
+        // Recuperamos el asiento si este navegador ya conoce al jugador.
+        // Para una sala pública, el botón envía el código automáticamente.
+        pedirIngreso(sala.codigo, nombre);
+      });
+
+      elemento.append(" ", boton);
+      return elemento;
+    });
+
+    lista.replaceChildren(...elementos);
+    estadoSalas.textContent = salas.length === 0
+      ? "No hay salas públicas activas."
+      : "";
+  } catch (error) {
+    console.error(error);
+    estadoSalas.textContent = "No se pudieron cargar las salas. Tocá Actualizar.";
+  } finally {
+    botonActualizar.disabled = false;
+  }
+}
+
+porId("actualizar-salas").addEventListener("click", actualizarSalasPublicas);
+
+// Cargamos el listado cuando la página termina de ejecutar este archivo.
+actualizarSalasPublicas();

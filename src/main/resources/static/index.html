@@ -15,7 +15,14 @@
     <label for="nombre">Tu nombre</label>
     <input id="nombre" name="nombre" form="formulario-ingreso"
            required maxlength="20" placeholder="Ingresar nombre...">
-    <button id="crear-sala" type="button">Crear sala privada</button>
+    <!-- El anfitrión elige cómo podrán encontrar e ingresar a su sala. -->
+    <label for="tipo-sala">Tipo de sala</label>
+    <select id="tipo-sala">
+      <option value="PRIVADA">Privada — ingreso con código</option>
+      <option value="PUBLICA">Pública — aparece en el listado</option>
+    </select>
+
+    <button id="crear-sala" type="button">Crear sala</button>
 
     <form id="formulario-ingreso">
       <label for="codigo">Código de sala</label>
@@ -23,6 +30,13 @@
              pattern="[A-Za-z0-9]{6}" placeholder="A1B2C3" autocomplete="off">
       <button type="submit">Unirse con código</button>
     </form>
+  </section>
+
+  <section id="salas-publicas">
+    <h2>Salas públicas</h2>
+    <button id="actualizar-salas" type="button">Actualizar salas</button>
+    <p id="estado-salas" role="status"></p>
+    <ul id="lista-salas-publicas"></ul>
   </section>
 
   <!-- La recuperación sirve tanto antes como después de iniciar la partida. -->
