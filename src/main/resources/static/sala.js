@@ -25,6 +25,12 @@ let jugador;
 let iniciada = false;
 let soyAnfitrion = false;
 let nombrePapaNoel = "";
+// El servidor informa el orden después de la elección de habilidades.
+let ordenDeTurnos = [];
+// Conservamos la última lista para poder dibujarla al recibir el orden.
+let ultimoTextoJugadores = "";
+// Lista pública informada por el servidor.
+let jugadoresEliminados = [];
 
 // Guardamos una copia por pestaña y otra por sala y nombre dentro del navegador.
 // Así podemos probar varios nombres en pestañas del mismo navegador.
@@ -177,6 +183,17 @@ function conectar(sesion, accion) {
   soyAnfitrion = false;
   // Limpiamos el nombre al abrir una conexión.
   nombrePapaNoel = "";
+  // Limpiamos los datos de participación de la conexión anterior.
+  ordenDeTurnos = [];
+  ultimoTextoJugadores = "";
+  jugadoresEliminados = [];
+  porId("estado-participacion").hidden = true;
+  porId("estado-participacion").textContent = "";
+  // Esperamos el estado del servidor antes de habilitar controles.
+  porId("controles-turno").hidden = true;
+  porId("terminar-turno").disabled = true;
+  porId("detalle-turno").textContent = "";
+  porId("tiempo-turno").textContent = "01:00";
   panelRecuperar.hidden = true;
   acceso.hidden = true;
   porId("salas-publicas").hidden = true;
@@ -216,6 +233,57 @@ function conectar(sesion, accion) {
     }
 
     const mensaje = evento.data;
+    if (mensaje.startsWith("jugadores-eliminados:")) {
+      const texto = mensaje.slice("jugadores-eliminados:".length);
+      jugadoresEliminados = texto === "" ? [] : texto.split("\n");
+
+      const estoyEliminado = jugadoresEliminados.includes(jugador.nombre);
+      const aviso = porId("estado-participacion");
+
+      aviso.hidden = !estoyEliminado;
+      aviso.textContent = estoyEliminado
+        ? "Quedaste eliminado. Podés seguir mirando y compartir la victoria de tu bando."
+        : "";
+
+      if (estoyEliminado) {
+        porId("terminar-turno").disabled = true;
+      }
+
+      // Actualizamos las marcas sin cambiar el orden sorteado.
+      mostrarJugadores(ultimoTextoJugadores);
+      return;
+    }
+    if (mensaje.startsWith("turno:")) {
+      const [numero, nombre, esMiTurno, tiempo] =
+        mensaje.slice("turno:".length).split("\n");
+
+      const segundos = Number(tiempo);
+      const minutosVisibles = String(Math.floor(segundos / 60)).padStart(2, "0");
+      const segundosVisibles = String(segundos % 60).padStart(2, "0");
+
+      porId("controles-turno").hidden = false;
+      porId("detalle-turno").textContent =
+        `Turno ${numero}/24 · Juega ${nombre}`;
+
+      // Mostramos el tiempo del servidor; el navegador no reinicia el reloj.
+      porId("tiempo-turno").textContent =
+        `${minutosVisibles}:${segundosVisibles}`;
+
+      porId("terminar-turno").disabled =esMiTurno !== "true"|| segundos <= 0|| jugadoresEliminados.includes(jugador.nombre);
+
+      return;
+    }
+    if (mensaje.startsWith("orden-turnos:")) {
+      const texto = mensaje.slice("orden-turnos:".length);
+
+      // Guardamos el orden enviado por Java. El navegador no lo sortea.
+      ordenDeTurnos = texto === "" ? [] : texto.split("\n");
+
+      // Actualizamos la lista aunque todavía no haya llegado
+      // otro mensaje de conexión o desconexión.
+      mostrarJugadores(ultimoTextoJugadores);
+      return;
+    }
     if (mensaje.startsWith("partida-terminada:")) {
       const [resultado, gano] =
         mensaje.slice("partida-terminada:".length).split("\n");
@@ -231,6 +299,9 @@ function conectar(sesion, accion) {
       porId("confirmar-rol").hidden = true;
       porId("seleccion-habilidad").hidden = true;
       porId("tirar").hidden = true;
+      // Al finalizar la partida ya no quedan turnos disponibles.
+      porId("controles-turno").hidden = true;
+      porId("terminar-turno").disabled = true;
 
       estado.textContent = explicaciones[resultado];
       porId("estado-confirmacion").textContent =
@@ -308,9 +379,9 @@ function conectar(sesion, accion) {
       if (fase === "ELECCION_DE_HABILIDAD") {
         porId("estado-confirmacion").textContent =
           "Elegí tu habilidad. Esperamos a que todos confirmen su elección.";
-      } else if (fase === "PREPARACION_COMPLETA") {
+      } else if (fase === "EN_JUEGO") {
         porId("estado-confirmacion").textContent =
-          "¡Todos eligieron! La preparación está completa.";
+          "¡Todos eligieron! La partida está en juego.";
       }
       return;
     }
@@ -429,38 +500,67 @@ function mostrarHistorial(lista, texto) {
 }
 
 function mostrarJugadores(texto) {
+  ultimoTextoJugadores = texto;
+
   const filas = texto === "" ? [] : texto.split("\n");
   const conectados = filas.filter((fila) => fila.startsWith("1:")).length;
+
   porId("cantidad-jugadores").textContent =
     `Conectados: ${conectados} · Lugares ocupados: ${filas.length}/8`;
+
+  if (iniciada && ordenDeTurnos.length > 0) {
+    // Relacionamos cada nombre con su posición en el orden definitivo.
+    const posiciones = new Map(
+      ordenDeTurnos.map((nombre, posicion) => [nombre, posicion])
+    );
+
+    // Ordenamos las filas conservando su indicador de conexión.
+    // Si alguien abandonó, simplemente deja de aparecer en la lista.
+    filas.sort((primera, segunda) => {
+      const posicionPrimera =
+        posiciones.get(primera.slice(2)) ?? Number.MAX_SAFE_INTEGER;
+      const posicionSegunda =
+        posiciones.get(segunda.slice(2)) ?? Number.MAX_SAFE_INTEGER;
+
+      return posicionPrimera - posicionSegunda;
+    });
+  }
 
   const elementos = filas.map((fila, posicion) => {
     const nombre = fila.slice(2);
     const elemento = crearLinea(nombre);
-    // Identificamos a Papá Noel en la lista pública de jugadores.
+    // La eliminación es independiente de estar conectado o desconectado.
+    if (jugadoresEliminados.includes(nombre)) {
+      elemento.append(" — Eliminado");
+    }
+
+    // Papá Noel sigue siendo el único rol identificado públicamente.
     if (iniciada && nombre === nombrePapaNoel) {
       elemento.append(" — Papá Noel");
     }
+
     if (fila.startsWith("0:")) {
       elemento.append(" — Desconectado");
     }
 
+    // En el lobby conservamos el orden de ingreso y sus permisos.
     if (!iniciada && posicion === 0) {
       elemento.append(" — Anfitrión");
     }
 
-    // Solo el anfitrión ve los botones y el servidor vuelve a validar el permiso.
     if (!iniciada && soyAnfitrion && posicion > 0) {
       const boton = document.createElement("button");
       boton.type = "button";
       boton.textContent = "Expulsar";
       boton.setAttribute("aria-label", `Expulsar a ${nombre}`);
+
       boton.addEventListener("click", () => enviar(`expulsar:${nombre}`));
       elemento.append(" ", boton);
     }
 
     return elemento;
   });
+
   porId("lista-jugadores").replaceChildren(...elementos);
 }
 
@@ -475,6 +575,13 @@ function enviar(mensaje) {
 // El botón solicita la confirmación. Java comprueba quién la envía.
 porId("confirmar-rol").addEventListener("click", () => {
   enviar("confirmar-rol");
+});
+
+porId("terminar-turno").addEventListener("click", () => {
+  if (enviar("terminar-turno")) {
+    // Evitamos repetir la solicitud mientras llega la actualización.
+    porId("terminar-turno").disabled = true;
+  }
 });
 
 botonIniciar.addEventListener("click", () => enviar("iniciar-partida"));
