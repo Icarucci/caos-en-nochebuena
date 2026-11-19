@@ -232,6 +232,19 @@ public class JuegoWebSocket extends TextWebSocketHandler {
         if (registroSalas.estaIniciada(codigoSala)) {
             Partida partida = registroSalas.partidaDe(codigoSala);
             String identificador = buscarIdentificador(origen);
+            if ("terminar-turno".equals(texto)) {
+                // Partida comprueba que la solicitud sea del jugador de turno.
+                if (partida.terminarTurno(identificador)) {
+                    // Todos reciben el nuevo turno o el resultado final.
+                    avisarPreparacionSala(codigoSala);
+                } else {
+                    // Si la solicitud no es válida, reenviamos el estado real
+                    // únicamente al jugador que la envió.
+                    enviarEstadoPreparacion(identificador, jugador);
+                }
+
+                return;
+            }
             if (texto.startsWith("elegir-habilidad:")) {
                 String nombreHabilidad = texto.substring("elegir-habilidad:".length());
 
@@ -304,19 +317,62 @@ public class JuegoWebSocket extends TextWebSocketHandler {
         avisarJugadores(codigoSala);
     }
 
+    private void enviarTurnoPropio(String identificador, Jugador jugador) {
+        Partida partida = registroSalas.partidaDe(jugador.codigoSala());
+        if (partida == null || partida.getFase() != Partida.Fase.EN_JUEGO) {
+            return;
+        }
+
+        String identificadorDeTurno = partida.getJugadorDeTurno();
+        Jugador jugadorDeTurno = jugadores.get(identificadorDeTurno);
+
+        if (jugadorDeTurno == null) {
+            return;
+        }
+
+        // Cada pestaña recibe el mismo turno y tiempo restante,
+        // pero únicamente el jugador actual recibe permiso para finalizarlo.
+        enviar(jugador, "turno:"
+                + partida.getNumeroDeTurno() + "\n"
+                + jugadorDeTurno.nombre() + "\n"
+                + identificador.equals(identificadorDeTurno) + "\n"
+                + partida.getSegundosRestantesDelTurno());
+    }
+
     private void enviarEstadoPreparacion(String identificador, Jugador jugador) {
         Partida partida = registroSalas.partidaDe(jugador.codigoSala());
+        // Informamos los nombres de quienes fueron eliminados.
+        // Conservan su asiento y pueden seguir mirando la partida.
+        String eliminados = partida.getOrdenDeTurnos().stream()
+                .filter(partida::estaEliminado)
+                .map(jugadores::get)
+                .filter(java.util.Objects::nonNull)
+                .map(Jugador::nombre)
+                .collect(java.util.stream.Collectors.joining("\n"));
+
+        enviar(jugador, "jugadores-eliminados:" + eliminados);
         if (partida.getFase() == Partida.Fase.TERMINADA) {
             // Cada jugador recibe el resultado junto con su propia condición de victoria.
             Rol rol = partida.rolDe(identificador);
             ResultadoPartida resultado = partida.getResultado();
 
+            // El Arrepentido comparte la victoria según la mitad de la partida.
+            // El turno cero corresponde a la preparación, antes de comenzar a jugar.
             boolean gano = switch (resultado) {
                 case VICTORIA_PAPA_NOEL ->
-                        rol == Rol.PAPA_NOEL || rol == Rol.RODOLFO || rol == Rol.ELFO;
+                        rol == Rol.PAPA_NOEL
+                        || rol == Rol.RODOLFO
+                        || rol == Rol.ELFO
+                        || (rol == Rol.ARREPENTIDO
+                            && partida.getNumeroDeTurno() >= 13);
+
                 case VICTORIA_LADRONES ->
-                        rol == Rol.LADRON || rol == Rol.ARREPENTIDO;
+                        rol == Rol.LADRON
+                        || (rol == Rol.ARREPENTIDO
+                            && partida.getNumeroDeTurno() <= 12);
+
                 case VICTORIA_KRAMPUS -> rol == Rol.KRAMPUS;
+
                 default -> false;
             };
 
@@ -324,8 +380,21 @@ public class JuegoWebSocket extends TextWebSocketHandler {
             return;
         }
 
+        // El orden solo existe después de que todos eligieron su habilidad.
+        // Enviamos los nombres en ese orden, sin revelar los roles privados.
+        if (!partida.getOrdenDeTurnos().isEmpty()) {
+            String nombresOrdenados = partida.getOrdenDeTurnos().stream()
+                    .map(jugadores::get)
+                    .filter(java.util.Objects::nonNull)
+                    .map(Jugador::nombre)
+                    .collect(java.util.stream.Collectors.joining("\n"));
+
+            enviar(jugador, "orden-turnos:" + nombresOrdenados);
+        }
         enviar(jugador, "rol-confirmado:" + partida.confirmoRol(identificador));
         enviar(jugador, "fase:" + partida.getFase().name());
+        // También recuperamos el turno y su tiempo real al reconectarse.
+        enviarTurnoPropio(identificador, jugador);
 
         Habilidad elegida = partida.habilidadDe(identificador);
 
@@ -522,6 +591,37 @@ public class JuegoWebSocket extends TextWebSocketHandler {
             enviar(jugador, lista);
             if (!iniciada) {
                 enviar(jugador, "puede-iniciar:" + (jugador == anfitrion && hayQuorum));
+            }
+        }
+    }
+
+    // Revisamos los turnos cada segundo y actualizamos sus relojes.
+    // Compartimos el bloqueo de las operaciones de conexión y juego.
+    @Scheduled(fixedDelay = 1_000)
+    public synchronized void actualizarTurnos() {
+        // Recorremos cada sala una sola vez, aunque tenga varios jugadores.
+        List<String> codigos = jugadores.values().stream()
+                .map(Jugador::codigoSala)
+                .distinct()
+                .toList();
+
+        for (String codigoSala : codigos) {
+            Partida partida = registroSalas.partidaDe(codigoSala);
+
+            if (partida == null || partida.getFase() != Partida.Fase.EN_JUEGO) {
+                continue;
+            }
+
+            if (partida.finalizarTurnoSiVencio()) {
+                // El vencimiento puede iniciar otro turno o terminar la partida.
+                avisarPreparacionSala(codigoSala);
+            } else {
+                // Si continúa el mismo turno, actualizamos solamente su información.
+                for (var entrada : jugadores.entrySet()) {
+                    if (codigoSala.equals(entrada.getValue().codigoSala())) {
+                        enviarTurnoPropio(entrada.getKey(), entrada.getValue());
+                    }
+                }
             }
         }
     }

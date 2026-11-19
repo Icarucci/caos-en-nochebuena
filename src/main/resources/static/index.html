@@ -80,6 +80,18 @@
           <p id="habilidad-confirmada" role="status"></p>
         </section>
       </section>
+      <!-- Informa la eliminación sin ocultar el resto de la partida. -->
+      <p id="estado-participacion" role="status" hidden></p>
+      <!-- Controles del turno actual. -->
+      <section id="controles-turno" hidden>
+        <h3 id="detalle-turno"></h3>
+
+        <p>Tiempo restante: <span id="tiempo-turno">01:00</span></p>
+
+        <button id="terminar-turno" type="button" disabled>
+          Terminar turno
+        </button>
+      </section>
       <button id="tirar" type="button">Tirar Bola de nieve</button>
       <h3>Actividad</h3>
       <ul id="actividad" aria-live="polite"></ul>

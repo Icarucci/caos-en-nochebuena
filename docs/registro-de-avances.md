@@ -90,3 +90,22 @@ están pendientes de implementar.
 - La limpieza se ejecuta cada 10 segundos mediante @Scheduled.
 - Las operaciones sobre los jugadores y la limpieza comparten
   el bloqueo synchronized para evitar modificaciones simultáneas.
+
+### Sistema de turnos
+
+- Papá Noel comienza la partida.
+- El orden de los demás jugadores se sortea después de que todos
+  elijan su habilidad y se conserva durante la partida.
+- Cada turno individual dura un minuto.
+- Solo el jugador de turno puede finalizarlo manualmente.
+- Al vencer el tiempo, el servidor avanza al siguiente jugador.
+- La reconexión recupera el orden y el tiempo restante.
+- Al completar el turno 24, si la partida sigue en curso,
+  gana el bando de Papá Noel.
+- Ajustamos la victoria del Arrepentido según la mitad de la partida.
+
+#### Pendiente
+
+- Eliminación por perder dos turnos propios consecutivos. (IMPLEMENTADO)
+- Pausa del reloj durante las respuestas a cartas.
+- Implementación de cartas e intervenciones.
