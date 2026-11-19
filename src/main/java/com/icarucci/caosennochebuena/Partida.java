@@ -48,6 +48,12 @@ public class Partida {
     private int posicionDeTurno = 0;
     // Instante límite del turno actual, según el reloj monotónico del servidor.
     private long vencimientoDelTurno;
+    // Cada partida tiene su propio mazo y descarte.
+    private final Mazo mazo = new Mazo();
+
+    // Cada identificador tiene una mano independiente.
+    // Solo Partida modifica estas listas.
+    private final Map<String, List<Carta>> manosPorJugador = new HashMap<>();
 
     public Partida(Map<String, Rol> roles) {
         this.roles = Map.copyOf(roles);
@@ -89,6 +95,9 @@ public class Partida {
                 && identificador.equals(getJugadorDeTurno());
 
         jugadoresQueAbandonaron.add(identificador);
+
+        // Al abandonar, sus cartas pasan al descarte.
+        descartarManoDe(identificador);
 
         // Durante la preparación dejamos de esperar a quien abandonó.
         avanzarSiTodosConfirmaron();
@@ -181,14 +190,18 @@ public class Partida {
         // Así nadie conoce su posición al elegir la habilidad.
         sortearOrdenDeTurnos();
 
+        // Repartimos después de elegir las habilidades y antes del primer turno.
+        repartirManosIniciales();
+
         // Papá Noel ocupa la posición cero del orden sorteado.
         // La partida comienza después de la última elección de habilidad.
         posicionDeTurno = 0;
         numeroDeTurno = 1;
         fase = Fase.EN_JUEGO;
 
-        // El minuto comienza al iniciar el primer turno.
-        iniciarRelojDeTurno();
+        // Papá Noel recibe las dos cartas de su primer turno
+        // después de que todos recibieron las tres iniciales.
+        iniciarTurnoActual();
     }
 
     private void sortearOrdenDeTurnos() {
@@ -240,6 +253,13 @@ public class Partida {
     }
 
     public synchronized boolean terminarTurno(String identificador) {
+        // Conservamos la llamada existente para una mano sin exceso.
+        return terminarTurno(identificador, List.of());
+    }
+
+    public synchronized boolean terminarTurno(
+            String identificador, List<String> cartasADescartar) {
+
         if (fase != Fase.EN_JUEGO
                 || !ordenDeTurnos.get(posicionDeTurno).equals(identificador)
                 || jugadoresQueAbandonaron.contains(identificador)
@@ -247,8 +267,6 @@ public class Partida {
             return false;
         }
 
-        // Una solicitud que llega después del límite no evita
-        // que el servidor registre el vencimiento.
         if (System.nanoTime() - vencimientoDelTurno >= 0) {
             return false;
         }
@@ -257,7 +275,37 @@ public class Partida {
             return false;
         }
 
-        // Finalizar normalmente corta la sucesión de turnos perdidos.
+        List<Carta> mano = manosPorJugador.get(identificador);
+        int exceso = Math.max(0, mano.size() - 4);
+
+        // Debe elegir exactamente el exceso, sin repetir identificadores.
+        if (cartasADescartar == null || cartasADescartar.size() != exceso) {
+            return false;
+        }
+
+        Set<String> seleccionadas = new HashSet<>(cartasADescartar);
+
+        if (seleccionadas.size() != exceso) {
+            return false;
+        }
+
+        // Comprobamos que todas las cartas seleccionadas sean propias.
+        // Todavía no modificamos la mano.
+        List<Carta> descarteElegido = mano.stream()
+                .filter(carta -> seleccionadas.contains(carta.identificador()))
+                .toList();
+
+        if (descarteElegido.size() != exceso) {
+            return false;
+        }
+
+        // Solo después de validar toda la selección movemos las cartas.
+        for (Carta carta : descarteElegido) {
+            mano.remove(carta);
+            mazo.descartar(carta);
+        }
+
+        // Finalizar normalmente reinicia los vencimientos consecutivos.
         turnosPerdidos.remove(identificador);
         avanzarTurno();
         return true;
@@ -289,7 +337,20 @@ public class Partida {
         // Cada jugador que comienza a jugar consume un turno individual,
         // aunque todavía no se haya completado una vuelta de la mesa.
         numeroDeTurno++;
-        // Cada nuevo turno recibe su prupio minuto.
+        // El siguiente jugador roba y comienza su minuto.
+        iniciarTurnoActual();
+    }
+
+
+    private void iniciarTurnoActual() {
+        String identificador = ordenDeTurnos.get(posicionDeTurno);
+        List<Carta> mano = manosPorJugador.get(identificador);
+
+        // El robo ocurre una sola vez al comenzar el turno.
+        // Reconectarse o consultar el estado no vuelve a entregar cartas.
+        mano.addAll(mazo.robar(2));
+
+        // El minuto empieza después del robo.
         iniciarRelojDeTurno();
     }
 
@@ -332,9 +393,14 @@ public class Partida {
 
         if (perdidos >= 2) {
             jugadoresEliminados.add(identificador);
-            // La eliminación puede decidir la victoria inmediatamente,
-            // por ejemplo, si el eliminado es Papá Noel.
+
+            // Al eliminarse, toda su mano pasa al descarte.
+            descartarManoDe(identificador);
             evaluarResultado();
+        } else {
+            // Si venció su tiempo, no esperamos una selección:
+            // descartamos el exceso al azar antes de avanzar.
+            descartarExcesoAlAzar(identificador);
         }
 
         if (fase == Fase.EN_JUEGO) {
@@ -342,6 +408,72 @@ public class Partida {
         }
 
         return true;
+    }
+
+    private void repartirManosIniciales() {
+        // El orden ya contiene únicamente a quienes siguen participando.
+        for (String identificador : ordenDeTurnos) {
+            manosPorJugador.put(
+                    identificador,
+                    new ArrayList<>(mazo.robar(4)));
+        }
+    }
+
+    public synchronized List<Carta> getManoDe(String identificador) {
+        // Devolvemos una copia para impedir modificaciones desde afuera.
+        // JuegoWebSocket deberá enviarla únicamente a su dueño.
+        return List.copyOf(
+                manosPorJugador.getOrDefault(identificador, List.of()));
+    }
+
+    public synchronized int getCantidadCartasDe(String identificador) {
+        // Esta cantidad sí podrá mostrarse a los demás jugadores.
+        return manosPorJugador.getOrDefault(identificador, List.of()).size();
+    }
+
+    public synchronized int getCantidadCartasEnMazo() {
+        return mazo.getCantidadCartas();
+    }
+
+    public synchronized int getCantidadCartasEnDescarte() {
+        return mazo.getCantidadDescarte();
+    }
+
+    private void descartarExcesoAlAzar(String identificador) {
+        List<Carta> mano = manosPorJugador.get(identificador);
+        int exceso = Math.max(0, mano.size() - 4);
+
+        if (exceso == 0) {
+            return;
+        }
+
+        // Mezclamos una copia para seleccionar el descarte al azar
+        // sin alterar el orden de las cartas que conserva el jugador.
+        List<Carta> candidatas = new ArrayList<>(mano);
+        Collections.shuffle(candidatas);
+
+        for (int posicion = 0; posicion < exceso; posicion++) {
+            Carta carta = candidatas.get(posicion);
+            mano.remove(carta);
+            mazo.descartar(carta);
+        }
+    }
+
+    private void descartarManoDe(String identificador) {
+        List<Carta> mano = manosPorJugador.get(identificador);
+
+        // Durante la preparación puede abandonar alguien que todavía
+        // no recibió cartas.
+        if (mano == null) {
+            return;
+        }
+
+        // Las cartas vuelven al descarte y podrán reciclarse.
+        for (Carta carta : mano) {
+            mazo.descartar(carta);
+        }
+
+        mano.clear();
     }
 
     public synchronized ResultadoPartida evaluarResultado() {

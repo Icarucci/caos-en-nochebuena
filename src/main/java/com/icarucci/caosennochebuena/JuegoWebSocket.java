@@ -232,14 +232,23 @@ public class JuegoWebSocket extends TextWebSocketHandler {
         if (registroSalas.estaIniciada(codigoSala)) {
             Partida partida = registroSalas.partidaDe(codigoSala);
             String identificador = buscarIdentificador(origen);
-            if ("terminar-turno".equals(texto)) {
-                // Partida comprueba que la solicitud sea del jugador de turno.
-                if (partida.terminarTurno(identificador)) {
-                    // Todos reciben el nuevo turno o el resultado final.
+            if ("terminar-turno".equals(texto)|| texto.startsWith("terminar-turno:")) {
+
+                // Los clientes pueden enviar los identificadores de las cartas
+                // elegidas para descartar, separados por comas.
+                String seleccion = texto.startsWith("terminar-turno:")
+                        ? texto.substring("terminar-turno:".length())
+                        : "";
+
+                List<String> cartasADescartar = seleccion.isEmpty()
+                        ? List.of()
+                        : List.of(seleccion.split(",", -1));
+
+                // Partida valida el turno, la propiedad de las cartas
+                // y que se descarte exactamente la cantidad necesaria.
+                if (partida.terminarTurno(identificador, cartasADescartar)) {
                     avisarPreparacionSala(codigoSala);
                 } else {
-                    // Si la solicitud no es válida, reenviamos el estado real
-                    // únicamente al jugador que la envió.
                     enviarEstadoPreparacion(identificador, jugador);
                 }
 
@@ -339,8 +348,46 @@ public class JuegoWebSocket extends TextWebSocketHandler {
                 + partida.getSegundosRestantesDelTurno());
     }
 
+    private void enviarEstadoCartas(String identificador, Jugador jugador) {
+        Partida partida = registroSalas.partidaDe(jugador.codigoSala());
+
+        // Todavía no repartimos durante la preparación.
+        if (partida == null || partida.getOrdenDeTurnos().isEmpty()) {
+            return;
+        }
+
+        // Solo enviamos el contenido de la mano al dueño de esta conexión.
+        // Cada carta ocupa cuatro líneas: identificador, tipo, nombre y categoría.
+        String mano = partida.getManoDe(identificador).stream()
+                .map(carta -> carta.identificador() + "\n"
+                        + carta.tipo().name() + "\n"
+                        + carta.tipo().getNombre() + "\n"
+                        + carta.tipo().getCategoria().name())
+                .collect(java.util.stream.Collectors.joining("\n"));
+
+        enviar(jugador, "mano:" + mano);
+
+        // Las cantidades son públicas; las cartas de los demás no se envían.
+        String cantidades = jugadores.entrySet().stream()
+                .filter(entrada ->
+                        jugador.codigoSala().equals(entrada.getValue().codigoSala()))
+                .map(entrada -> entrada.getValue().nombre() + "\n"
+                        + partida.getCantidadCartasDe(entrada.getKey()))
+                .collect(java.util.stream.Collectors.joining("\n"));
+
+        enviar(jugador, "cantidades-cartas:" + cantidades);
+
+        enviar(jugador, "mazo:"
+                + partida.getCantidadCartasEnMazo() + "\n"
+                + partida.getCantidadCartasEnDescarte());
+    }
+
     private void enviarEstadoPreparacion(String identificador, Jugador jugador) {
         Partida partida = registroSalas.partidaDe(jugador.codigoSala());
+        // Recuperamos las cartas al reconectar y después de cada cambio de estado.
+        // Lo hacemos también al terminar para reflejar el descarte de un eliminado.
+        enviarEstadoCartas(identificador, jugador);
+
         // Informamos los nombres de quienes fueron eliminados.
         // Conservan su asiento y pueden seguir mirando la partida.
         String eliminados = partida.getOrdenDeTurnos().stream()

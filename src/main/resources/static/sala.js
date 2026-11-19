@@ -27,6 +27,8 @@ let soyAnfitrion = false;
 let nombrePapaNoel = "";
 // El servidor informa el orden después de la elección de habilidades.
 let ordenDeTurnos = [];
+// Solo contiene cantidades públicas, nunca las cartas ajenas.
+let cantidadesDeCartas = new Map();
 // Conservamos la última lista para poder dibujarla al recibir el orden.
 let ultimoTextoJugadores = "";
 // Lista pública informada por el servidor.
@@ -183,6 +185,11 @@ function conectar(sesion, accion) {
   soyAnfitrion = false;
   // Limpiamos el nombre al abrir una conexión.
   nombrePapaNoel = "";
+  // Evitamos mostrar las cartas o cantidades de una sala anterior.
+  cantidadesDeCartas = new Map();
+  porId("zona-cartas").hidden = true;
+  porId("mano-propia").replaceChildren();
+  porId("estado-mazo").textContent = "";
   // Limpiamos los datos de participación de la conexión anterior.
   ordenDeTurnos = [];
   ultimoTextoJugadores = "";
@@ -233,6 +240,80 @@ function conectar(sesion, accion) {
     }
 
     const mensaje = evento.data;
+    if (mensaje.startsWith("mano:")) {
+      const texto = mensaje.slice("mano:".length);
+      const datos = texto === "" ? [] : texto.split("\n");
+      const elementos = [];
+
+      // Cada grupo describe una copia individual de carta.
+      for (let posicion = 0; posicion < datos.length; posicion += 4) {
+        const identificador = datos[posicion];
+        const tipo = datos[posicion + 1];
+        const nombre = datos[posicion + 2];
+        const categoria = datos[posicion + 3];
+
+        const elemento = crearLinea(`${nombre} · ${categoria}`);
+
+        // Conservamos la identidad para seleccionar esa copia cuando
+        // implementemos jugar y descartar cartas.
+        elemento.dataset.identificador = identificador;
+        elemento.dataset.tipo = tipo;
+
+        // Marcar una carta no la descarta inmediatamente.
+        // La selección se envía recién al tocar Terminar turno.
+        const etiqueta = document.createElement("label");
+        const casilla = document.createElement("input");
+
+        casilla.type = "checkbox";
+        casilla.dataset.descarte = identificador;
+
+        // El siguiente mensaje de turno habilita las casillas si corresponde.
+        casilla.disabled = true;
+
+        etiqueta.append(casilla, " Descartar al terminar");
+        elemento.append(" ", etiqueta);
+        elementos.push(elemento);
+      }
+
+      porId("mano-propia").replaceChildren(
+        ...elementos.length > 0
+          ? elementos
+          : [crearLinea("No tenés cartas en la mano.")]
+      );
+
+      const exceso = Math.max(0, elementos.length - 4);
+
+      porId("aviso-descarte").textContent = exceso > 0
+        ? `Para terminar tu turno, marcá ${exceso} carta(s) para descartar.`
+        : "No necesitás descartar para terminar tu turno.";
+
+      porId("zona-cartas").hidden = false;
+      return;
+    }
+
+    if (mensaje.startsWith("cantidades-cartas:")) {
+      const texto = mensaje.slice("cantidades-cartas:".length);
+      const datos = texto === "" ? [] : texto.split("\n");
+      cantidadesDeCartas = new Map();
+
+      // Cada jugador llega como nombre y cantidad, en dos líneas.
+      for (let posicion = 0; posicion < datos.length; posicion += 2) {
+        cantidadesDeCartas.set(datos[posicion], Number(datos[posicion + 1]));
+      }
+
+      mostrarJugadores(ultimoTextoJugadores);
+      return;
+    }
+
+    if (mensaje.startsWith("mazo:")) {
+      const [cantidadMazo, cantidadDescarte] =
+        mensaje.slice("mazo:".length).split("\n");
+
+      porId("estado-mazo").textContent =
+        `Mazo: ${cantidadMazo} cartas · Descarte: ${cantidadDescarte} cartas`;
+
+      return;
+    }
     if (mensaje.startsWith("jugadores-eliminados:")) {
       const texto = mensaje.slice("jugadores-eliminados:".length);
       jugadoresEliminados = texto === "" ? [] : texto.split("\n");
@@ -270,6 +351,16 @@ function conectar(sesion, accion) {
         `${minutosVisibles}:${segundosVisibles}`;
 
       porId("terminar-turno").disabled =esMiTurno !== "true"|| segundos <= 0|| jugadoresEliminados.includes(jugador.nombre);
+
+      // Las casillas siguen el mismo permiso que el botón.
+      // Actualizar el reloj no borra la selección del jugador.
+      const puedeSeleccionar = !porId("terminar-turno").disabled;
+
+      porId("mano-propia")
+        .querySelectorAll("input[data-descarte]")
+        .forEach((casilla) => {
+          casilla.disabled = !puedeSeleccionar;
+        });
 
       return;
     }
@@ -529,6 +620,10 @@ function mostrarJugadores(texto) {
   const elementos = filas.map((fila, posicion) => {
     const nombre = fila.slice(2);
     const elemento = crearLinea(nombre);
+    // Mostramos solamente la cantidad de cartas de cada participante.
+    if (iniciada && cantidadesDeCartas.has(nombre)) {
+      elemento.append(` — ${cantidadesDeCartas.get(nombre)} cartas`);
+    }
     // La eliminación es independiente de estar conectado o desconectado.
     if (jugadoresEliminados.includes(nombre)) {
       elemento.append(" — Eliminado");
@@ -578,9 +673,32 @@ porId("confirmar-rol").addEventListener("click", () => {
 });
 
 porId("terminar-turno").addEventListener("click", () => {
-  if (enviar("terminar-turno")) {
-    // Evitamos repetir la solicitud mientras llega la actualización.
+  if (porId("terminar-turno").disabled) {
+    return;
+  }
+
+  const casillas = [
+    ...porId("mano-propia").querySelectorAll("input[data-descarte]")
+  ];
+
+  const seleccionadas = casillas
+    .filter((casilla) => casilla.checked)
+    .map((casilla) => casilla.dataset.descarte);
+
+  const exceso = Math.max(0, casillas.length - 4);
+
+  // Avisamos antes de enviar. El servidor igualmente vuelve a validar.
+  if (seleccionadas.length !== exceso) {
+    porId("aviso-descarte").textContent =
+      `Tenés que marcar exactamente ${exceso} carta(s) para terminar.`;
+    return;
+  }
+
+  if (enviar(`terminar-turno:${seleccionadas.join(",")}`)) {
     porId("terminar-turno").disabled = true;
+    casillas.forEach((casilla) => {
+      casilla.disabled = true;
+    });
   }
 });
 
