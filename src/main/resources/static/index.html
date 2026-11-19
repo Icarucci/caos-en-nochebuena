@@ -93,6 +93,16 @@
         </button>
       </section>
       <button id="tirar" type="button">Tirar Bola de nieve</button>
+
+      <!-- Cada navegador recibe únicamente el contenido de su propia mano. -->
+      <section id="zona-cartas" hidden>
+        <p id="estado-mazo"></p>
+        <h3>Tu mano</h3>
+        <ul id="mano-propia"></ul>
+        <!-- Explica cuántas cartas hay que descartar al finalizar. -->
+        <p id="aviso-descarte" role="status"></p>
+      </section>
+
       <h3>Actividad</h3>
       <ul id="actividad" aria-live="polite"></ul>
     </section>

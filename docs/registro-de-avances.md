@@ -109,3 +109,27 @@ están pendientes de implementar.
 - Eliminación por perder dos turnos propios consecutivos. (IMPLEMENTADO)
 - Pausa del reloj durante las respuestas a cartas.
 - Implementación de cartas e intervenciones.
+
+### Mazo y manos
+
+- Creamos el catálogo de 100 cartas con sus categorías y cantidades.
+- Cada copia tiene un identificador único.
+- Cada jugador recibe 4 cartas iniciales y roba 2 al comenzar su turno.
+- La mano propia es privada; los demás ven solamente su cantidad.
+- Al finalizar el turno, se elige el descarte necesario para conservar
+  un máximo de 4 cartas.
+- Al vencer el tiempo, el exceso se descarta al azar.
+- Por abandono o eliminación, toda la mano pasa al descarte.
+- El mazo reutiliza el descarte mezclado cuando se agota.
+- La reconexión recupera la mano sin repartir ni robar nuevamente.
+
+#### Verificación manual
+
+- Reparto inicial, robo por turno y contadores.
+- Selección y descarte del exceso de cartas.
+- Descarte automático por vencimiento.
+- Recuperación de la mano al reconectarse.
+
+#### Pendiente de verificar
+
+- Reciclado del descarte al agotar el mazo.
