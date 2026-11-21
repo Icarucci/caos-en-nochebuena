@@ -1,4 +1,4 @@
-package com.icarucci.caosennochebuena;
+package com.icarucci.caosennochebuena.modelo;
 
 import java.util.Objects;
 

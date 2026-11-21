@@ -33,6 +33,16 @@ let cantidadesDeCartas = new Map();
 let ultimoTextoJugadores = "";
 // Lista pública informada por el servidor.
 let jugadoresEliminados = [];
+// Solo contiene los roles que el servidor ya hizo públicos.
+let rolesRevelados = new Map();
+// Datos recibidos del servidor para dibujar los controles de combate.
+let manoActual = [];
+let vidasPorNombre = new Map();
+let ataqueActual = null;
+let permisoParaAtacar = false;
+let faseActual = "";
+// Distingue el cierre definitivo de una desconexión recuperable.
+let partidaFinalizada = false;
 
 // Guardamos una copia por pestaña y otra por sala y nombre dentro del navegador.
 // Así podemos probar varios nombres en pestañas del mismo navegador.
@@ -49,6 +59,106 @@ function leerSesion(almacenamiento, clave) {
   } catch {
     return null;
   }
+}
+
+function borrarAccesosDeSala(codigo) {
+  // Quitamos los accesos de esta sala que conoce este navegador.
+  // No borramos accesos correspondientes a otras salas.
+  for (const almacenamiento of [sessionStorage, localStorage]) {
+    for (const clave of Object.keys(almacenamiento)) {
+      if (!clave.startsWith("caos:")) {
+        continue;
+      }
+
+      const datos = leerSesion(almacenamiento, clave);
+
+      if (datos?.codigo === codigo) {
+        almacenamiento.removeItem(clave);
+      }
+    }
+  }
+}
+
+function mostrarResultadoPartida(resultado, gano) {
+  partidaFinalizada = true;
+  faseActual = "TERMINADA";
+  permisoParaAtacar = false;
+  ataqueActual = null;
+
+  actualizarControlesCombate();
+
+  porId("confirmar-rol").hidden = true;
+  porId("seleccion-habilidad").hidden = true;
+  porId("controles-turno").hidden = true;
+  porId("terminar-turno").disabled = true;
+  panelRecuperar.hidden = true;
+
+  porId("mano-propia")
+    .querySelectorAll("input[data-descarte]")
+    .forEach((casilla) => {
+      casilla.disabled = true;
+    });
+
+  if (jugador?.codigo) {
+    borrarAccesosDeSala(jugador.codigo);
+  }
+
+  // La URL deja de apuntar a una sala que ya terminó.
+  history.replaceState(null, "", location.pathname);
+
+  const explicaciones = {
+    VICTORIA_PAPA_NOEL: "Ganó el bando de Papá Noel.",
+    VICTORIA_LADRONES: "Ganaron los Ladrones de la Navidad.",
+    VICTORIA_KRAMPUS: "Ganó Krampus.",
+    SIN_PARTICIPANTES: "La partida terminó sin participantes."
+  };
+
+  const resumen = explicaciones[resultado]
+    ?? "La partida terminó y la sala ya no está disponible.";
+
+  porId("resumen-resultado").textContent = resumen;
+  porId("resultado-personal").textContent =
+    resultado === "SIN_PARTICIPANTES" || gano == null
+      ? ""
+      : gano === "true" ? "¡Ganaste!" : "Perdiste.";
+
+  estado.textContent = resumen;
+
+  const cartel = porId("resultado-partida");
+
+  if (!cartel.open) {
+    cartel.showModal();
+  }
+}
+
+function salirDePartidaFinalizada() {
+  // Invalidamos el socket antes de cerrarlo para ignorar eventos tardíos.
+  const conexion = socket;
+  socket = null;
+
+  if (conexion && conexion.readyState < WebSocket.CLOSING) {
+    conexion.close(1000, "Salida de la partida finalizada");
+  }
+
+  if (jugador?.codigo) {
+    borrarAccesosDeSala(jugador.codigo);
+  }
+
+  jugador = null;
+  iniciada = false;
+  faseActual = "";
+
+  porId("resultado-partida").close();
+  mesa.hidden = true;
+  panelRecuperar.hidden = true;
+  acceso.hidden = false;
+  porId("salas-publicas").hidden = false;
+  campoCodigo.value = "";
+
+  history.replaceState(null, "", location.pathname);
+  estado.textContent = "Creá una sala o ingresá un código.";
+
+  actualizarSalasPublicas();
 }
 
 function borrarSesion(sesion) {
@@ -86,7 +196,8 @@ async function mostrarRecuperacion(sesion) {
     if (!existe) {
       // El servidor perdió la sala, por ejemplo, después de un reinicio.
       // Quitamos también su acceso guardado en este navegador.
-      borrarSesion(sesion);
+      // También limpia accesos antiguos de una partida finalizada.
+      borrarAccesosDeSala(sesion.codigo);
       jugador = null;
       acceso.hidden = false;
       campoCodigo.value = "";
@@ -181,10 +292,23 @@ function conectar(sesion, accion) {
   // Recordamos el asiento anterior antes de reemplazar al jugador actual.
   const sesionAnterior = jugador;
   jugador = sesion;
+  partidaFinalizada = false;
   iniciada = false;
   soyAnfitrion = false;
   // Limpiamos el nombre al abrir una conexión.
   nombrePapaNoel = "";
+  // Una conexión nueva debe recuperar sus permisos del servidor.
+  manoActual = [];
+  vidasPorNombre = new Map();
+  ataqueActual = null;
+  permisoParaAtacar = false;
+  faseActual = "";
+
+  porId("controles-ataque").hidden = true;
+  porId("ataque-pendiente").hidden = true;
+  porId("tirar").disabled = true;
+  porId("usar-defensa").disabled = true;
+  porId("recibir-danio").disabled = true;
   // Evitamos mostrar las cartas o cantidades de una sala anterior.
   cantidadesDeCartas = new Map();
   porId("zona-cartas").hidden = true;
@@ -240,10 +364,70 @@ function conectar(sesion, accion) {
     }
 
     const mensaje = evento.data;
+    if (mensaje.startsWith("roles-revelados:")) {
+      const texto = mensaje.slice("roles-revelados:".length);
+      const datos = texto === "" ? [] : texto.split("\n");
+
+      rolesRevelados = new Map();
+
+      for (let posicion = 0; posicion < datos.length; posicion += 2) {
+        rolesRevelados.set(datos[posicion], datos[posicion + 1]);
+      }
+
+      mostrarJugadores(ultimoTextoJugadores);
+      return;
+    }
+    if (mensaje.startsWith("vidas:")) {
+      const texto = mensaje.slice("vidas:".length);
+      const datos = texto === "" ? [] : texto.split("\n");
+
+      vidasPorNombre = new Map();
+
+      for (let posicion = 0; posicion < datos.length; posicion += 2) {
+        vidasPorNombre.set(datos[posicion], Number(datos[posicion + 1]));
+      }
+
+      if (vidasPorNombre.has(jugador.nombre)) {
+        porId("rol-vidas").textContent =
+          `Vidas: ${vidasPorNombre.get(jugador.nombre)}`;
+      }
+
+      mostrarJugadores(ultimoTextoJugadores);
+      return;
+    }
+
+    if (mensaje.startsWith("ataque:")) {
+      if (mensaje === "ataque:ninguno") {
+        ataqueActual = null;
+      } else {
+        const [
+          identificador,
+          atacante,
+          objetivo,
+          tiempo,
+          puedeResponder,
+          sinDefensaPropia
+        ] = mensaje.slice("ataque:".length).split("\n");
+
+        ataqueActual = {
+          identificador,
+          atacante,
+          objetivo,
+          segundos: Number(tiempo),
+          puedeResponder: puedeResponder === "true",
+          sinDefensaPropia: sinDefensaPropia === "true"
+        };
+      }
+
+      actualizarControlesCombate();
+      return;
+    }
     if (mensaje.startsWith("mano:")) {
       const texto = mensaje.slice("mano:".length);
       const datos = texto === "" ? [] : texto.split("\n");
       const elementos = [];
+      // Conservamos las cartas propias para los selectores de ataque y defensa.
+      manoActual = [];
 
       // Cada grupo describe una copia individual de carta.
       for (let posicion = 0; posicion < datos.length; posicion += 4) {
@@ -251,6 +435,7 @@ function conectar(sesion, accion) {
         const tipo = datos[posicion + 1];
         const nombre = datos[posicion + 2];
         const categoria = datos[posicion + 3];
+        manoActual.push({ identificador, tipo, nombre, categoria });
 
         const elemento = crearLinea(`${nombre} · ${categoria}`);
 
@@ -288,6 +473,7 @@ function conectar(sesion, accion) {
         : "No necesitás descartar para terminar tu turno.";
 
       porId("zona-cartas").hidden = false;
+      actualizarControlesCombate();
       return;
     }
 
@@ -335,25 +521,26 @@ function conectar(sesion, accion) {
       return;
     }
     if (mensaje.startsWith("turno:")) {
-      const [numero, nombre, esMiTurno, tiempo] =
+      const [numero, nombre, puedeFinalizar, tiempo, puedeAtacar, pausado] =
         mensaje.slice("turno:".length).split("\n");
 
       const segundos = Number(tiempo);
-      const minutosVisibles = String(Math.floor(segundos / 60)).padStart(2, "0");
-      const segundosVisibles = String(segundos % 60).padStart(2, "0");
+      permisoParaAtacar = puedeAtacar === "true";
 
       porId("controles-turno").hidden = false;
       porId("detalle-turno").textContent =
-        `Turno ${numero}/24 · Juega ${nombre}`;
+        `Turno ${numero}/24 · Juega ${nombre}`
+        + (pausado === "true" ? " · Esperando respuesta" : "");
 
-      // Mostramos el tiempo del servidor; el navegador no reinicia el reloj.
-      porId("tiempo-turno").textContent =
-        `${minutosVisibles}:${segundosVisibles}`;
+      // El tiempo queda fijo mientras se resuelve el ataque.
+      porId("tiempo-turno").textContent = formatearTiempo(segundos);
 
-      porId("terminar-turno").disabled =esMiTurno !== "true"|| segundos <= 0|| jugadoresEliminados.includes(jugador.nombre);
+      porId("terminar-turno").disabled =
+        puedeFinalizar !== "true"
+        || segundos <= 0
+        || jugadoresEliminados.includes(jugador.nombre);
 
-      // Las casillas siguen el mismo permiso que el botón.
-      // Actualizar el reloj no borra la selección del jugador.
+      // Conservamos las marcas de descarte al actualizar el reloj.
       const puedeSeleccionar = !porId("terminar-turno").disabled;
 
       porId("mano-propia")
@@ -362,6 +549,7 @@ function conectar(sesion, accion) {
           casilla.disabled = !puedeSeleccionar;
         });
 
+      actualizarControlesCombate();
       return;
     }
     if (mensaje.startsWith("orden-turnos:")) {
@@ -379,26 +567,7 @@ function conectar(sesion, accion) {
       const [resultado, gano] =
         mensaje.slice("partida-terminada:".length).split("\n");
 
-      const explicaciones = {
-        VICTORIA_PAPA_NOEL: "Ganó el bando de Papá Noel.",
-        VICTORIA_LADRONES: "Ganaron los Ladrones y el Arrepentido.",
-        VICTORIA_KRAMPUS: "Ganó Krampus.",
-        SIN_PARTICIPANTES: "La partida terminó sin participantes.",
-      };
-
-      // Cerramos los controles de preparación y mostramos el resultado privado.
-      porId("confirmar-rol").hidden = true;
-      porId("seleccion-habilidad").hidden = true;
-      porId("tirar").hidden = true;
-      // Al finalizar la partida ya no quedan turnos disponibles.
-      porId("controles-turno").hidden = true;
-      porId("terminar-turno").disabled = true;
-
-      estado.textContent = explicaciones[resultado];
-      porId("estado-confirmacion").textContent =
-        resultado === "SIN_PARTICIPANTES"
-          ? "La sala quedó vacía."
-          : gano === "true" ? "¡Ganaste!" : "Perdiste.";
+      mostrarResultadoPartida(resultado, gano);
       return;
     }
     if (mensaje.startsWith("opciones-habilidad:")) {
@@ -438,18 +607,18 @@ function conectar(sesion, accion) {
       return;
     }
 
-  if (mensaje.startsWith("habilidad-elegida:")) {
-    const [, nombre, descripcion] =
-      mensaje.slice("habilidad-elegida:".length).split("\n");
+    if (mensaje.startsWith("habilidad-elegida:")) {
+      const [, nombre, descripcion] =
+        mensaje.slice("habilidad-elegida:".length).split("\n");
 
-    // Solo reemplazamos las opciones después de la confirmación del servidor.
-    porId("opciones-habilidad").replaceChildren();
-    porId("habilidad-confirmada").textContent =
-      `Elegiste ${nombre}. ${descripcion}`;
+      // Solo reemplazamos las opciones después de la confirmación del servidor.
+      porId("opciones-habilidad").replaceChildren();
+      porId("habilidad-confirmada").textContent =
+        `Elegiste ${nombre}. ${descripcion}`;
 
-    porId("seleccion-habilidad").hidden = false;
-    return;
-  }
+      porId("seleccion-habilidad").hidden = false;
+      return;
+    }
     if (mensaje.startsWith("rol-confirmado:")) {
       const confirmado = mensaje === "rol-confirmado:true";
 
@@ -464,7 +633,8 @@ function conectar(sesion, accion) {
       const fase = mensaje.slice("fase:".length);
 
       // El servidor controla cuándo termina cada etapa.
-      porId("tirar").hidden = true;
+      faseActual = fase;
+      actualizarControlesCombate();
       porId("confirmar-rol").hidden = fase !== "REPARTO_DE_ROLES";
 
       if (fase === "ELECCION_DE_HABILIDAD") {
@@ -482,7 +652,8 @@ function conectar(sesion, accion) {
 
       porId("rol-nombre").textContent = `Tu rol: ${nombreRol}`;
       porId("rol-objetivo").textContent = objetivo;
-      porId("rol-vidas").textContent = `Vidas iniciales: ${vidas}`;
+      // Al reconectarse, priorizamos las vidas actuales si ya llegaron.
+      porId("rol-vidas").textContent = `Vidas: ${vidasPorNombre.get(jugador.nombre) ?? vidas}`;
       porId("rol-privado").hidden = false;
       return;
     }
@@ -541,6 +712,17 @@ function conectar(sesion, accion) {
     }
 
     socket = null;
+    // El cierre posterior al resultado no debe ofrecer reconexión
+    // ni ocultar el cartel que el jugador todavía está leyendo.
+    if (partidaFinalizada) {
+      return;
+    }
+
+    // Respaldo si se recibió el cierre definitivo sin el mensaje de resultado.
+    if (evento.code === 4014) {
+      mostrarResultadoPartida(null, null);
+      return;
+    }
     mesa.hidden = true;
     acceso.hidden = false;
     porId("salas-publicas").hidden = false;
@@ -620,6 +802,10 @@ function mostrarJugadores(texto) {
   const elementos = filas.map((fila, posicion) => {
     const nombre = fila.slice(2);
     const elemento = crearLinea(nombre);
+    // Las vidas actuales son públicas; los roles siguen siendo privados.
+    if (iniciada && vidasPorNombre.has(nombre)) {
+      elemento.append(` — ${vidasPorNombre.get(nombre)} vidas`);
+    }
     // Mostramos solamente la cantidad de cartas de cada participante.
     if (iniciada && cantidadesDeCartas.has(nombre)) {
       elemento.append(` — ${cantidadesDeCartas.get(nombre)} cartas`);
@@ -627,6 +813,11 @@ function mostrarJugadores(texto) {
     // La eliminación es independiente de estar conectado o desconectado.
     if (jugadoresEliminados.includes(nombre)) {
       elemento.append(" — Eliminado");
+
+      // Papá Noel ya tiene su etiqueta pública más abajo.
+      if (rolesRevelados.has(nombre) && nombre !== nombrePapaNoel) {
+        elemento.append(` — ${rolesRevelados.get(nombre)}`);
+      }
     }
 
     // Papá Noel sigue siendo el único rol identificado públicamente.
@@ -635,7 +826,7 @@ function mostrarJugadores(texto) {
     }
 
     if (fila.startsWith("0:")) {
-      elemento.append(" — Desconectado");
+      elemento.append(" — Reconectando...");
     }
 
     // En el lobby conservamos el orden de ingreso y sus permisos.
@@ -657,6 +848,141 @@ function mostrarJugadores(texto) {
   });
 
   porId("lista-jugadores").replaceChildren(...elementos);
+  // Actualizamos los objetivos disponibles si alguien sale o es eliminado.
+  actualizarControlesCombate();
+}
+
+function formatearTiempo(segundos) {
+  const minutos = String(Math.floor(segundos / 60)).padStart(2, "0");
+  const resto = String(segundos % 60).padStart(2, "0");
+
+  return `${minutos}:${resto}`;
+}
+
+function actualizarOpciones(selector, opciones) {
+  // No reconstruimos el selector cuando solo cambia el reloj.
+  // Así conservamos la selección y el foco del usuario.
+  const actuales = [...selector.options]
+    .map((opcion) => [opcion.value, opcion.textContent]);
+
+  if (JSON.stringify(actuales) === JSON.stringify(opciones)) {
+    return;
+  }
+
+  const seleccionAnterior = selector.value;
+
+  const elementos = opciones.map(([valor, nombre]) => {
+    const opcion = document.createElement("option");
+    opcion.value = valor;
+    opcion.textContent = nombre;
+    return opcion;
+  });
+
+  selector.replaceChildren(...elementos);
+
+  if (opciones.some(([valor]) => valor === seleccionAnterior)) {
+    selector.value = seleccionAnterior;
+  }
+}
+
+function actualizarControlesCombate() {
+  const conectado = socket?.readyState === WebSocket.OPEN;
+  const enJuego = conectado && faseActual === "EN_JUEGO";
+
+  const bolas = manoActual
+    .filter((carta) => carta.tipo === "BOLA_DE_NIEVE")
+    .map((carta, posicion) => [
+      carta.identificador,
+      `${carta.nombre} ${posicion + 1}`
+    ]);
+
+  // Los desconectados siguen siendo objetivos válidos.
+  // Excluimos al propio jugador y a quienes ya fueron eliminados.
+  const nombres = ultimoTextoJugadores === ""
+    ? []
+    : ultimoTextoJugadores.split("\n").map((fila) => fila.slice(2));
+
+  const objetivos = nombres
+    .filter((nombre) =>
+      nombre !== jugador?.nombre
+      && !jugadoresEliminados.includes(nombre)
+      && vidasPorNombre.get(nombre) !== 0)
+    .map((nombre) => [nombre, nombre]);
+
+  actualizarOpciones(porId("bola-elegida"), bolas);
+  actualizarOpciones(porId("objetivo-ataque"), objetivos);
+
+  const puedeAtacar =
+    enJuego
+    && permisoParaAtacar
+    && ataqueActual === null
+    && !jugadoresEliminados.includes(jugador?.nombre);
+
+  porId("controles-ataque").hidden = !enJuego;
+  porId("tirar").hidden = !enJuego;
+  porId("bola-elegida").disabled = !puedeAtacar;
+  porId("objetivo-ataque").disabled = !puedeAtacar;
+  porId("tirar").disabled =
+    !puedeAtacar || bolas.length === 0 || objetivos.length === 0;
+
+  const hayAtaque = enJuego && ataqueActual !== null;
+  porId("ataque-pendiente").hidden = !hayAtaque;
+
+  const defensas = manoActual
+    .filter((carta) =>
+      carta.tipo === "ESQUIVAR" || carta.tipo === "DEVOLVER")
+    .map((carta) => [carta.identificador, carta.nombre]);
+
+  actualizarOpciones(porId("defensa-elegida"), defensas);
+
+  const puedeResponder =
+    hayAtaque
+    && ataqueActual.puedeResponder
+    && ataqueActual.segundos > 0
+    && !jugadoresEliminados.includes(jugador?.nombre);
+
+  porId("opciones-respuesta").hidden = !puedeResponder;
+  porId("defensa-elegida").disabled = !puedeResponder;
+  porId("usar-defensa").disabled =
+    !puedeResponder || defensas.length === 0;
+  porId("recibir-danio").disabled = !puedeResponder;
+
+  if (hayAtaque) {
+    if (ataqueActual.sinDefensaPropia) {
+      // Todos ven el pedido de ayuda durante la espera breve.
+      porId("detalle-ataque").textContent =
+        `${ataqueActual.objetivo} no tiene cómo defenderse. `
+        + "¿Alguien va a ayudarlo?";
+
+      porId("tiempo-respuesta").textContent =
+        `${ataqueActual.segundos} segundos para ayudar`;
+    } else {
+      // Si tiene defensa propia, conserva el minuto habitual.
+      porId("detalle-ataque").textContent =
+        `${ataqueActual.atacante} le tira una bola a ${ataqueActual.objetivo}.`;
+
+      porId("tiempo-respuesta").textContent =
+        formatearTiempo(ataqueActual.segundos);
+    }
+  }
+}
+
+function enviarRespuestaAtaque(identificadorCarta) {
+  if (!ataqueActual
+      || !ataqueActual.puedeResponder
+      || ataqueActual.segundos <= 0) {
+    return;
+  }
+
+  // Incluimos el ataque al que estamos respondiendo.
+  // Una respuesta vieja no podrá resolver una bola nueva.
+  const mensaje =
+    `responder-ataque:${ataqueActual.identificador}\n${identificadorCarta}`;
+
+  if (enviar(mensaje)) {
+    porId("usar-defensa").disabled = true;
+    porId("recibir-danio").disabled = true;
+  }
 }
 
 function enviar(mensaje) {
@@ -701,11 +1027,51 @@ porId("terminar-turno").addEventListener("click", () => {
     });
   }
 });
+// Salida desde el cartel de resultado.
+porId("salir-partida").addEventListener(
+  "click", salirDePartidaFinalizada);
+
+// Escape realiza la misma salida y limpieza que el botón.
+porId("resultado-partida").addEventListener("cancel", (evento) => {
+  evento.preventDefault();
+  salirDePartidaFinalizada();
+});
 
 botonIniciar.addEventListener("click", () => enviar("iniciar-partida"));
 porId("tirar").addEventListener("click", () => {
-  if (iniciada) {
-    enviar("tirar-bola");
+  if (porId("tirar").disabled) {
+    return;
+  }
+
+  const carta = porId("bola-elegida").value;
+  const objetivo = porId("objetivo-ataque").value;
+
+  if (!carta || !objetivo) {
+    return;
+  }
+
+  if (enviar(`lanzar-bola:${carta}\n${objetivo}`)) {
+    // Esperamos la confirmación antes de permitir otra solicitud.
+    porId("tirar").disabled = true;
+  }
+});
+
+porId("usar-defensa").addEventListener("click", () => {
+  if (porId("usar-defensa").disabled) {
+    return;
+  }
+
+  const carta = porId("defensa-elegida").value;
+
+  if (carta) {
+    enviarRespuestaAtaque(carta);
+  }
+});
+
+porId("recibir-danio").addEventListener("click", () => {
+  if (!porId("recibir-danio").disabled) {
+    // La cadena vacía representa aceptar el daño.
+    enviarRespuestaAtaque("");
   }
 });
 

@@ -1,4 +1,4 @@
-package com.icarucci.caosennochebuena;
+package com.icarucci.caosennochebuena.modelo;
 
 // Agrupa las cartas según su función general.
 // Los efectos particulares se implementarán por separado.

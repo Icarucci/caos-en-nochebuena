@@ -1,4 +1,4 @@
-package com.icarucci.caosennochebuena;
+package com.icarucci.caosennochebuena.modelo;
 
 // Cada opción guarda el nombre y la explicación que verá el jugador al elegir.
 public enum Habilidad {

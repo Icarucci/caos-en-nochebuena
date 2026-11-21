@@ -92,7 +92,45 @@
           Terminar turno
         </button>
       </section>
-      <button id="tirar" type="button">Tirar Bola de nieve</button>
+      <!-- Solo se habilita cuando el servidor permite lanzar una bola. -->
+      <section id="controles-ataque" hidden>
+        <h3>Lanzar Bola de nieve</h3>
+
+        <label for="bola-elegida">Carta</label>
+        <select id="bola-elegida" disabled></select>
+
+        <label for="objetivo-ataque">Objetivo</label>
+        <select id="objetivo-ataque" disabled></select>
+
+        <button id="tirar" type="button" disabled>
+          Tirar Bola de nieve
+        </button>
+      </section>
+
+      <!-- Todos ven el ataque; solo el objetivo puede responder. -->
+      <section id="ataque-pendiente" hidden>
+        <h3>Bola de nieve en juego</h3>
+        <p id="detalle-ataque"></p>
+
+        <p>
+          Tiempo para responder:
+          <span id="tiempo-respuesta">01:00</span>
+        </p>
+
+        <div id="opciones-respuesta" hidden>
+          <label for="defensa-elegida">Tu defensa</label>
+          <select id="defensa-elegida" disabled></select>
+
+          <button id="usar-defensa" type="button" disabled>
+            Usar defensa
+          </button>
+
+          <!-- No consume una carta: acepta perder una vida. -->
+          <button id="recibir-danio" type="button" disabled>
+            Recibir daño
+          </button>
+        </div>
+      </section>
 
       <!-- Cada navegador recibe únicamente el contenido de su propia mano. -->
       <section id="zona-cartas" hidden>
@@ -107,5 +145,12 @@
       <ul id="actividad" aria-live="polite"></ul>
     </section>
   </section>
+  <!-- Permanece visible aunque el servidor cierre la conexión de la partida. -->
+  <dialog id="resultado-partida" aria-labelledby="titulo-resultado">
+    <h2 id="titulo-resultado">Partida finalizada</h2>
+    <p id="resumen-resultado"></p>
+    <p id="resultado-personal"></p>
+    <button id="salir-partida" type="button">Salir</button>
+  </dialog>
 </body>
 </html>

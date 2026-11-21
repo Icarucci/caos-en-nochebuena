@@ -1,4 +1,4 @@
-package com.icarucci.caosennochebuena;
+package com.icarucci.caosennochebuena.modelo;
 
 // Cada rol define lo que verá el jugador cuando se le asigne.
 public enum Rol {
