@@ -1,4 +1,4 @@
-package com.icarucci.caosennochebuena;
+package com.icarucci.caosennochebuena.modelo;
 
 // Define cómo se descubre y se ingresa a una sala.
 public enum TipoSala {

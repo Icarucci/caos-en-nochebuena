@@ -1,10 +1,12 @@
-package com.icarucci.caosennochebuena;
+package com.icarucci.caosennochebuena.servicio;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+
+import com.icarucci.caosennochebuena.modelo.Habilidad;
 
 public class RepartidorDeHabilidades {
 

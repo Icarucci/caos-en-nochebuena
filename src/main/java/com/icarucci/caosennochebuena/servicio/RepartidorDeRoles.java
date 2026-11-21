@@ -1,8 +1,10 @@
-package com.icarucci.caosennochebuena;
+package com.icarucci.caosennochebuena.servicio;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+
+import com.icarucci.caosennochebuena.modelo.Rol;
 
 public class RepartidorDeRoles {
 

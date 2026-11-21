@@ -133,3 +133,36 @@ están pendientes de implementar.
 #### Pendiente de verificar
 
 - Reciclado del descarte al agotar el mazo.
+
+### Organización del backend
+
+- Separamos las clases en paquetes por responsabilidad.
+- Actualizamos los package e imports mediante la refactorización de Java.
+- Documentamos la estructura en docs/arquitectura.md.
+
+### Ataques, defensas y cierre de partidas
+
+- Incorporamos vidas actuales y eliminación por daño.
+- Agregamos Bola de nieve, Esquivar y Devolver.
+- El reloj del turno se pausa mientras se resuelve un ataque.
+- Sin defensa propia, se abre una espera de ayuda de 5 segundos;
+  al vencer, el daño se aplica automáticamente.
+- Incorporamos eventos al registro de actividad y revelación
+  del rol de los eliminados.
+- Agregamos el cartel de resultado y el botón Salir.
+- Implementamos la eliminación de la sala al finalizar.
+- Reorganizamos el backend en paquetes y documentamos la arquitectura.
+
+
+### Pendiente: chat y actividad unificados
+
+- El chat estará disponible desde el ingreso a la sala y durante la partida.
+- En la sala de espera mostrará mensajes de los jugadores y avisos
+  de ingreso, desconexión, reconexión, abandono y expulsión.
+- Durante la partida, el mismo chat incorporará las acciones del juego:
+  turnos, ataques, defensas, daño, eliminaciones y resultado.
+- Los mensajes y eventos aparecerán en orden cronológico,
+  diferenciando visualmente los mensajes del sistema.
+- Al comenzar la partida se conservarán los mensajes anteriores.
+- La reconexión recuperará el historial disponible de la sala.
+- Nunca se publicarán manos ni roles que continúen ocultos.

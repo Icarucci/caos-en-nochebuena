@@ -1,4 +1,4 @@
-package com.icarucci.caosennochebuena;
+package com.icarucci.caosennochebuena.modelo;
 
 public enum ResultadoPartida {
     EN_CURSO,
