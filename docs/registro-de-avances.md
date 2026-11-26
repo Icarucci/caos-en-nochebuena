@@ -166,3 +166,10 @@ están pendientes de implementar.
 - Al comenzar la partida se conservarán los mensajes anteriores.
 - La reconexión recuperará el historial disponible de la sala.
 - Nunca se publicarán manos ni roles que continúen ocultos.
+
+### Verificación del cierre de partida — 26/11/2026
+
+- Los conectados reciben el cartel con el resultado.
+- Salir vuelve al inicio sin ofrecer reconexión.
+- La sala finalizada desaparece del listado.
+- Los jugadores desconectados no pueden recuperar una sala finalizada.
