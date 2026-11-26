@@ -60,3 +60,84 @@ y eliminan las salas que permanecen sin conexiones.
 - Separar progresivamente de JuegoWebSocket la gestión de conexiones
   y la construcción de mensajes.
 - Mantener documentadas las decisiones a medida que crezca el juego.
+
+## Chat e historial de mensajes
+
+### Implementación actual
+
+El servidor conserva en memoria un historial por sala que reúne
+las conversaciones y los eventos públicos, en orden cronológico.
+
+Los mensajes se representan mediante MensajeSala y se distinguen
+por su tipo:
+
+- CHAT: mensajes escritos por los jugadores.
+- SISTEMA: ingresos, reconexiones, abandonos, expulsiones y acciones
+  públicas del juego.
+
+El frontend muestra ambos tipos en un mismo panel, disponible
+durante el lobby y la partida. Los eventos se muestran en cursiva.
+
+Al reconectarse, el jugador recupera el historial disponible.
+Actualmente, este historial se elimina al eliminar la sala y se
+pierde si se reinicia el servidor.
+
+### Diseño previsto: canales independientes
+
+Compartir un panel visual no significa compartir el almacenamiento
+ni los destinatarios de los mensajes.
+
+Se prevén tres canales:
+
+| Canal | Contenido | Destinatarios |
+| --- | --- | --- |
+| Sala | Conversaciones y eventos del lobby | Integrantes de la sala |
+| Partida | Conversaciones y acciones durante el juego | Participantes de la partida |
+| Privado | Conversación entre dos cuentas | Las dos cuentas involucradas |
+
+Al comenzar una partida, la interfaz podrá conservar visibles los
+mensajes del lobby, aunque estos mantendrán su asociación con la sala.
+
+Los mensajes privados podrán mostrarse en el panel de una partida,
+pero seguirán perteneciendo a su conversación privada. No se
+incorporarán al historial ni a las exportaciones de esa partida.
+
+### Cuentas, amigos y mensajes privados
+
+La mensajería privada estará disponible para usuarios autenticados,
+tanto desde el inicio del juego como durante una partida.
+
+Su conexión será independiente de la pertenencia a una sala.
+Entrar o salir de una partida no deberá interrumpir la conversación.
+
+Se prevén los siguientes comandos:
+
+- /w, /whisper y /msg: enviar un mensaje privado.
+- /r y /reply: responder a la última persona que escribió por privado.
+
+También se podrá seleccionar un amigo desde la interfaz para
+facilitar el uso desde el celular.
+
+Los mensajes privados se distinguirán mediante un color y las
+etiquetas “Privado de” y “Privado para”. La interfaz indicará
+claramente a quién se enviará cada respuesta.
+
+Dentro de una sala o partida, los mensajes sin comando se enviarán
+al canal público correspondiente.
+
+### Persistencia y privacidad
+
+Cuando se implemente la base de datos, cada mensaje tendrá un
+identificador, fecha y hora, tipo, autor cuando corresponda y una
+referencia a su sala, partida o conversación privada.
+
+El servidor validará la identidad del remitente y el acceso al canal.
+Los mensajes privados se entregarán únicamente a las cuentas
+involucradas; no se enviarán al resto de los jugadores para ocultarlos
+después en el frontend.
+
+La interfaz podrá combinar los canales autorizados en orden
+cronológico, sin modificar su pertenencia ni sus permisos.
+
+La persistencia de mensajes, los canales separados y la mensajería
+privada son funcionalidades planificadas, todavía no implementadas.

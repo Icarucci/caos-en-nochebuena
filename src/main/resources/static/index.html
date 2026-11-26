@@ -53,15 +53,11 @@
     <ul id="lista-jugadores" aria-label="Jugadores"></ul>
 
     <!-- El servidor determina cuál de estas dos áreas se muestra. -->
+    <!-- El botón de inicio solo aparece durante la espera. -->
     <section id="lobby">
-      <button id="iniciar-partida" type="button" disabled>Iniciar partida</button>
-      <h3>Chat de la sala</h3>
-      <ul id="chat" aria-live="polite"></ul>
-      <form id="formulario-chat">
-        <label for="mensaje-chat">Mensaje</label>
-        <input id="mensaje-chat" required maxlength="200" autocomplete="off">
-        <button type="submit">Enviar</button>
-      </form>
+      <button id="iniciar-partida" type="button" disabled>
+        Iniciar partida
+      </button>
     </section>
 
     <section id="partida" hidden>
@@ -141,10 +137,25 @@
         <p id="aviso-descarte" role="status"></p>
       </section>
 
-      <h3>Actividad</h3>
-      <ul id="actividad" aria-live="polite"></ul>
+        </section>
+
+    <!-- Compartimos el mismo chat durante la espera y durante la partida.
+         Aquí también aparecerán las conexiones y las acciones del juego. -->
+    <section id="conversacion-sala" aria-labelledby="titulo-chat">
+      <h3 id="titulo-chat">Chat y actividad</h3>
+
+      <!-- JavaScript agregará los mensajes en el orden recibido. -->
+      <ul id="chat" aria-live="polite" aria-relevant="additions"></ul>
+
+      <form id="formulario-chat">
+        <label for="mensaje-chat">Mensaje</label>
+        <input id="mensaje-chat" required maxlength="200"
+               autocomplete="off">
+        <button type="submit">Enviar</button>
+      </form>
     </section>
   </section>
+
   <!-- Permanece visible aunque el servidor cierre la conexión de la partida. -->
   <dialog id="resultado-partida" aria-labelledby="titulo-resultado">
     <h2 id="titulo-resultado">Partida finalizada</h2>
