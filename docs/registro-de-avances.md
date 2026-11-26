@@ -173,3 +173,26 @@ están pendientes de implementar.
 - Salir vuelve al inicio sin ofrecer reconexión.
 - La sala finalizada desaparece del listado.
 - Los jugadores desconectados no pueden recuperar una sala finalizada.
+
+### Decisión de arquitectura: canales de chat — 26/11/2026
+
+- Se definió que el panel de chat podrá mostrar mensajes de distintos
+  canales sin mezclar sus historiales ni sus destinatarios.
+- A futuro se separarán los canales de sala, partida y conversación
+  privada.
+- Los mensajes privados podrán leerse y responderse desde el inicio
+  o durante una partida, pero no formarán parte del historial de esta.
+- Se documentaron los comandos previstos y las validaciones del servidor.
+- La persistencia y los canales independientes quedan pendientes.
+
+### Chat unificado de sala — 26/11/2026
+
+- Se unificaron las conversaciones y los eventos públicos en un historial
+  por sala mediante MensajeSala, con tipos CHAT y SISTEMA.
+- El mismo panel está disponible en el lobby y durante la partida.
+- Los eventos se muestran en cursiva, sin el prefijo “Sistema”.
+- Se registran ingresos, reconexiones, pérdidas de conexión, abandonos,
+  cambios de sala y expulsiones.
+- Al iniciar la partida se conserva el historial del lobby.
+- Se verificó manualmente el envío de mensajes, la actividad del juego
+  y la recuperación del historial en orden y sin duplicados al reconectar.

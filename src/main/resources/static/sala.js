@@ -13,7 +13,6 @@ const botonIniciar = porId("iniciar-partida");
 const formularioChat = porId("formulario-chat");
 const campoChat = porId("mensaje-chat");
 const chat = porId("chat");
-const actividad = porId("actividad");
 
 const claveActual = "caos:sesion-actual";
 const codigoEnUrl = new URLSearchParams(location.search).get("sala")?.trim().toUpperCase();
@@ -672,8 +671,8 @@ function conectar(sesion, accion) {
       marcarUrl(jugador.codigo);
       porId("titulo-sala").textContent = `Sala ${jugador.codigo}`;
       campoCodigo.value = jugador.codigo;
+      // Limpiamos la vista antes de recuperar el historial de esta sala.
       chat.replaceChildren();
-      actividad.replaceChildren();
       mesa.hidden = false;
       lobby.hidden = false;
       vistaPartida.hidden = true;
@@ -695,14 +694,13 @@ function conectar(sesion, accion) {
       nombrePapaNoel = mensaje.slice("papa-noel:".length);
     } else if (mensaje.startsWith("jugadores:")) {
       mostrarJugadores(mensaje.slice("jugadores:".length));
-    } else if (mensaje.startsWith("chat-historial:")) {
-      mostrarHistorial(chat, mensaje.slice("chat-historial:".length));
-    } else if (mensaje.startsWith("historial:")) {
-      mostrarHistorial(actividad, mensaje.slice("historial:".length));
-    } else if (mensaje.startsWith("chat:")) {
-      chat.append(crearLinea(mensaje.slice("chat:".length)));
-    } else if (mensaje.startsWith("actividad:")) {
-      actividad.append(crearLinea(mensaje.slice("actividad:".length)));
+    } else if (mensaje.startsWith("historial-sala:")) {
+      // El servidor entrega el historial completo en su orden original.
+      chat.replaceChildren();
+      agregarMensajesDeSala(mensaje.slice("historial-sala:".length));
+    } else if (mensaje.startsWith("mensaje-sala:")) {
+      // Los mensajes nuevos se agregan después de los anteriores.
+      agregarMensajesDeSala(mensaje.slice("mensaje-sala:".length));
     }
   });
 
@@ -767,9 +765,39 @@ function crearLinea(texto) {
   return linea;
 }
 
-function mostrarHistorial(lista, texto) {
-  const lineas = texto === "" ? [] : texto.split("\n");
-  lista.replaceChildren(...lineas.map(crearLinea));
+function agregarMensajesDeSala(texto) {
+  if (texto === "") {
+    return;
+  }
+
+  // Cada mensaje ocupa dos líneas: tipo y contenido.
+  // Java enviará CHAT para conversaciones y SISTEMA para eventos del juego.
+  const campos = texto.split("\n");
+
+  for (let indice = 0; indice + 1 < campos.length; indice += 2) {
+    const tipo = campos[indice];
+    const contenido = campos[indice + 1];
+
+    // Ignoramos tipos que nuestra interfaz todavía no reconoce.
+    if (tipo !== "CHAT" && tipo !== "SISTEMA") {
+      continue;
+    }
+
+    // Reutilizamos crearLinea, que usa textContent para mostrar texto seguro.
+    // El estilo distingue los eventos sin agregar un prefijo al texto.
+    const linea = crearLinea(contenido);
+
+    linea.classList.add(
+      tipo === "SISTEMA" ? "mensaje-sistema" : "mensaje-jugador"
+    );
+
+    // Diferenciación provisoria hasta desarrollar el diseño de la interfaz.
+    if (tipo === "SISTEMA") {
+      linea.style.fontStyle = "italic";
+    }
+
+    chat.append(linea);
+  }
 }
 
 function mostrarJugadores(texto) {
@@ -1077,8 +1105,12 @@ porId("recibir-danio").addEventListener("click", () => {
 
 formularioChat.addEventListener("submit", (evento) => {
   evento.preventDefault();
+
   const texto = campoChat.value.trim();
-  if (!iniciada && texto && enviar(`chat:${texto}`)) {
+
+  // Permitimos conversar tanto en el lobby como durante la partida.
+  // Java valida la conexión, la sala y el contenido del mensaje.
+  if (!partidaFinalizada && texto && enviar(`chat:${texto}`)) {
     campoChat.value = "";
   }
 });

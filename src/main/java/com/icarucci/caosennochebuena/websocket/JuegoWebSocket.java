@@ -17,6 +17,7 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 import org.springframework.web.util.UriComponentsBuilder;
+import org.springframework.scheduling.annotation.Scheduled;
 
 import com.icarucci.caosennochebuena.modelo.Habilidad;
 import com.icarucci.caosennochebuena.modelo.Partida;
@@ -24,8 +25,10 @@ import com.icarucci.caosennochebuena.modelo.ResultadoPartida;
 import com.icarucci.caosennochebuena.modelo.Rol;
 import com.icarucci.caosennochebuena.servicio.RegistroSalas;
 import com.icarucci.caosennochebuena.modelo.AtaquePendiente;
+import com.icarucci.caosennochebuena.modelo.MensajeSala;
 
-import org.springframework.scheduling.annotation.Scheduled;
+
+
 
 @Component
 public class JuegoWebSocket extends TextWebSocketHandler {
@@ -47,8 +50,9 @@ public class JuegoWebSocket extends TextWebSocketHandler {
     private final Map<String, Jugador> jugadores = new LinkedHashMap<>();
     // Permite avisar de la expulsión aunque ese jugador estuviera desconectado.
     private final Map<String, String> salaPorIdentificadorExpulsado = new LinkedHashMap<>();
-    private final Map<String, List<String>> chatPorSala = new LinkedHashMap<>();
-    private final Map<String, List<String>> historialPorSala = new LinkedHashMap<>();
+    // Conservamos conversaciones y eventos en una misma lista por sala.
+    // Las operaciones se realizan desde los métodos sincronizados del handler.
+    private final Map<String, List<MensajeSala>> mensajesPorSala = new LinkedHashMap<>();
 
     public JuegoWebSocket(RegistroSalas registroSalas) {
         this.registroSalas = registroSalas;
@@ -131,6 +135,9 @@ public class JuegoWebSocket extends TextWebSocketHandler {
             return;
         }
 
+        // En la sala anterior queda registrado que liberó su lugar.
+        registrarActividad(codigoAnterior,anterior.nombre() + " abandonó la sala para entrar a otra.");
+
         Partida partida = registroSalas.partidaDe(codigoAnterior);
 
         if (partida != null) {
@@ -165,6 +172,11 @@ public class JuegoWebSocket extends TextWebSocketHandler {
         }
 
         if ("abandonar".equals(accion)) {
+            // Registramos el abandono antes de evaluar si termina la partida.
+            registrarActividad(
+                    codigoSala,
+                    anterior.nombre() + " abandonó la sala.");
+
             Partida partida = registroSalas.partidaDe(codigoSala);
             if (partida != null) {
                 // Siempre comprobamos el resultado después de un abandono,
@@ -190,23 +202,43 @@ public class JuegoWebSocket extends TextWebSocketHandler {
         cerrarConexion(anterior.conexion(), new CloseStatus(4011, "Conexion reemplazada"));
     }
 
-    private void registrar(String identificador, Jugador jugador) throws IOException {
-        // Estas confirmaciones son privadas. El resto de la sala solo ve el nombre.
-        jugador.conexion().sendMessage(new TextMessage("identificador:" + identificador));
-        jugador.conexion().sendMessage(new TextMessage("sala-confirmada"));
+    private void registrar(String identificador, Jugador jugador)throws IOException {
+
+        // Comprobamos si ya tenía un asiento antes de actualizar su conexión.
+        boolean reconexion = jugadores.containsKey(identificador);
         String codigoSala = jugador.codigoSala();
+
+        // Estas confirmaciones son privadas.
+        jugador.conexion().sendMessage(
+                new TextMessage("identificador:" + identificador));
+        jugador.conexion().sendMessage(new TextMessage("sala-confirmada"));
+
         jugadores.put(identificador, jugador);
 
         if (registroSalas.estaIniciada(codigoSala)) {
             enviar(jugador, "partida-iniciada");
-            // Al reconectar, recuperamos el rol que ya estaba asignado.
+
+            // Recuperamos únicamente el rol y el estado privado de este jugador.
             enviarRolPropio(identificador, jugador);
-            enviar(jugador, "historial:" + String.join("\n",
-                    historialPorSala.getOrDefault(codigoSala, List.of())));
-        } else {
-            enviar(jugador, "chat-historial:" + String.join("\n",
-                    chatPorSala.getOrDefault(codigoSala, List.of())));
         }
+
+        // Recuperamos el mismo historial tanto en el lobby como en la partida.
+        String historial = mensajesPorSala
+                .getOrDefault(codigoSala, List.of())
+                .stream()
+                .map(this::serializarMensajeSala)
+                .collect(java.util.stream.Collectors.joining("\n"));
+
+        enviar(jugador, "historial-sala:" + historial);
+
+        // Lo registramos después del historial para evitar duplicarlo
+        // en el navegador que acaba de ingresar.
+        registrarActividad(
+                codigoSala,
+                jugador.nombre() + (reconexion
+                        ? " se reconectó a la sala."
+                        : " se unió a la sala."));
+
         avisarJugadores(codigoSala);
     }
 
@@ -222,6 +254,12 @@ public class JuegoWebSocket extends TextWebSocketHandler {
         // El cierre de una conexión que ya fue reemplazada se ignora arriba.
         Jugador jugador = jugadores.get(identificador);
         jugadores.put(identificador, jugador.conectar(null));
+
+        // Perder la conexión no significa abandonar: conserva su asiento.
+        registrarActividad(
+                jugador.codigoSala(),
+                jugador.nombre() + " perdió la conexión. Reconectando…");
+
         avisarJugadores(jugador.codigoSala());
     }
 
@@ -234,6 +272,22 @@ public class JuegoWebSocket extends TextWebSocketHandler {
 
         String codigoSala = jugador.codigoSala();
         String texto = mensaje.getPayload();
+        // El chat está disponible antes y después de iniciar la partida.
+        // La identidad del autor se obtiene de su conexión.
+        if (texto.startsWith("chat:")) {
+            String contenido = texto.substring("chat:".length()).strip();
+
+            // También impide saltos de línea que alterarían nuestro protocolo.
+            if (textoValido(contenido, 200)) {
+                registrarMensajeSala(
+                        codigoSala,
+                        MensajeSala.Tipo.CHAT,
+                        jugador.nombre() + ": " + contenido);
+            }
+
+            // Un mensaje de chat nunca se procesa como una jugada.
+            return;
+        }
 
         // Después del inicio se procesan jugadas públicas.
         if (registroSalas.estaIniciada(codigoSala)) {
@@ -352,13 +406,6 @@ public class JuegoWebSocket extends TextWebSocketHandler {
         // En el lobby se aceptan mensajes de chat y acciones del anfitrión.
         if (texto.startsWith("expulsar:")) {
             expulsarJugador(jugador, texto.substring("expulsar:".length()));
-        } else if (texto.startsWith("chat:")) {
-            String contenido = texto.substring("chat:".length()).strip();
-            if (textoValido(contenido, 200)) {
-                String linea = jugador.nombre() + ": " + contenido;
-                chatPorSala.computeIfAbsent(codigoSala, clave -> new ArrayList<>()).add(linea);
-                enviarASala(codigoSala, "chat:" + linea);
-            }
         } else if ("iniciar-partida".equals(texto)
             && buscarAnfitrion(codigoSala) == jugador
             && contarConectados(codigoSala) >= MIN_JUGADORES) {
@@ -598,11 +645,25 @@ public class JuegoWebSocket extends TextWebSocketHandler {
     }
 
     private void registrarActividad(String codigoSala, String texto) {
-        // Conservamos la actividad para recuperarla al reconectarse.
-        historialPorSala.computeIfAbsent(
-                codigoSala, clave -> new ArrayList<>()).add(texto);
+        // Las acciones del juego se incorporan al mismo historial que el chat.
+        registrarMensajeSala(codigoSala, MensajeSala.Tipo.SISTEMA, texto);
+    }
 
-        enviarASala(codigoSala, "actividad:" + texto);
+    private void registrarMensajeSala(
+            String codigoSala, MensajeSala.Tipo tipo, String texto) {
+
+        MensajeSala mensaje = new MensajeSala(tipo, texto);
+
+        // Primero guardamos el mensaje; después lo enviamos a los conectados.
+        mensajesPorSala.computeIfAbsent(
+                codigoSala, clave -> new ArrayList<>()).add(mensaje);
+
+        enviarASala(codigoSala, "mensaje-sala:" + serializarMensajeSala(mensaje));
+    }
+
+    private String serializarMensajeSala(MensajeSala mensaje) {
+        // El navegador espera dos líneas: tipo y contenido.
+        return mensaje.tipo().name() + "\n" + mensaje.texto();
     }
 
     private String nombreParaActividad(String identificador) {
@@ -680,8 +741,7 @@ public class JuegoWebSocket extends TextWebSocketHandler {
 
         // La sala deja de existir: no admite ingresos ni reconexiones.
         registroSalas.eliminar(codigoSala);
-        chatPorSala.remove(codigoSala);
-        historialPorSala.remove(codigoSala);
+        mensajesPorSala.remove(codigoSala);
         sinConexionesDesde.remove(codigoSala);
 
         salaPorIdentificadorExpulsado.entrySet().removeIf(
@@ -732,6 +792,12 @@ public class JuegoWebSocket extends TextWebSocketHandler {
         String identificador = objetivo.getKey();
         Jugador expulsado = jugadores.remove(identificador);
         salaPorIdentificadorExpulsado.put(identificador, codigoSala);
+        // El asiento ya fue retirado: el cierre no generará un aviso
+        // de reconexión para alguien que fue expulsado.
+        registrarActividad(
+                codigoSala,
+                solicitante.nombre() + " expulsó a "
+                        + expulsado.nombre() + " de la sala.");
         cerrarConexion(expulsado.conexion(), new CloseStatus(4013, "Jugador expulsado"));
         avisarJugadores(codigoSala);
     }
@@ -806,8 +872,7 @@ public class JuegoWebSocket extends TextWebSocketHandler {
         // Sin asientos reservados, la sala se elimina inmediatamente.
         if (jugadoresEnSala(codigoSala).isEmpty()) {
             registroSalas.eliminar(codigoSala);
-            chatPorSala.remove(codigoSala);
-            historialPorSala.remove(codigoSala);
+            mensajesPorSala.remove(codigoSala);
             sinConexionesDesde.remove(codigoSala);
 
             // Eliminamos también los accesos invalidados de esta sala.
