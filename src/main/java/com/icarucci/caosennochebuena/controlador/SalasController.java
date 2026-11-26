@@ -1,9 +1,15 @@
-package com.icarucci.caosennochebuena;
+package com.icarucci.caosennochebuena.controlador;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+
+import com.icarucci.caosennochebuena.modelo.TipoSala;
+import com.icarucci.caosennochebuena.servicio.RegistroSalas;
+import com.icarucci.caosennochebuena.websocket.JuegoWebSocket;
+import com.icarucci.caosennochebuena.websocket.JuegoWebSocket.SalaPublica;
+
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;

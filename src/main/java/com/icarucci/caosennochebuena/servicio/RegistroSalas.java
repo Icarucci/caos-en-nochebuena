@@ -1,4 +1,4 @@
-package com.icarucci.caosennochebuena;
+package com.icarucci.caosennochebuena.servicio;
 
 import java.util.Locale;
 import java.util.UUID;
@@ -8,6 +8,10 @@ import java.util.List;
 import java.util.Map;
 
 import org.springframework.stereotype.Service;
+
+import com.icarucci.caosennochebuena.modelo.Partida;
+import com.icarucci.caosennochebuena.modelo.Rol;
+import com.icarucci.caosennochebuena.modelo.TipoSala;
 
 
 
