@@ -13,6 +13,12 @@ import java.util.Collections;
 import java.time.Duration;
 import java.util.UUID;
 
+import com.icarucci.caosennochebuena.modelo.efecto.ContextoEfectoCarta;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoCarta;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoBolaDeNieve;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoEsquivar;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoDevolver;
+
 public class Partida {
 
     // Cada turno dura un minuto. Medimos el tiempo transcurrido
@@ -79,6 +85,43 @@ public class Partida {
     // Acumulamos sucesos públicos hasta que WebSocket los publique.
     // No guardamos aquí el contenido de las manos.
     private final List<EventoActividad> eventosPendientes = new ArrayList<>();
+
+    // Asociamos los tipos implementados con sus comportamientos.
+    // Los efectos no guardan información particular de un jugador.
+    private final Map<TipoCarta, EfectoCarta> efectosPorTipo = Map.of(
+            TipoCarta.BOLA_DE_NIEVE, new EfectoBolaDeNieve(),
+            TipoCarta.ESQUIVAR, new EfectoEsquivar(),
+            TipoCarta.DEVOLVER, new EfectoDevolver());
+
+    // Adaptador privado entre los efectos y el estado de esta partida.
+    // No se entrega al navegador ni se expone mediante un getter.
+    private final ContextoEfectoCarta contextoEfectos =
+            new ContextoEfectoCarta() {
+
+                @Override
+                public void abrirAtaque(String atacante, String objetivo) {
+                    // Conservamos la elección de plazos en Partida:
+                    // un minuto con defensa o cinco segundos sin ella.
+                    ataquePendiente = crearAtaquePendiente(atacante, objetivo);
+                }
+
+                @Override
+                public void cerrarAtaque() {
+                    // Recupera el tiempo restante del turno original.
+                    cerrarAtaquePendiente();
+                }
+
+                @Override
+                public void registrarEvento(
+                        String jugador,
+                        String descripcion,
+                        String objetivo) {
+
+                    // Delegamos en el registro público que ya utiliza el chat.
+                    Partida.this.registrarEvento(
+                            jugador, descripcion, objetivo);
+                }
+            };
 
     public Partida(Map<String, Rol> roles) {
         this.roles = Map.copyOf(roles);
@@ -494,8 +537,8 @@ public class Partida {
 
         // Abrimos una espera nueva, con su propio identificador y plazo.
         // Las vidas todavía no cambian: primero puede haber una defensa.
-        ataquePendiente = crearAtaquePendiente(atacante, objetivo);
-        registrarEvento(atacante, "lanza una Bola de nieve a", objetivo);
+        // Ejecutamos el comportamiento asociado a la carta ya validada.
+        efectosPorTipo.get(bola.tipo()).aplicar(contextoEfectos, atacante, objetivo);
 
         return true;
     }
@@ -546,26 +589,18 @@ public class Partida {
             return false;
         }
 
-        // Validamos todo antes de consumir la carta.
+        // Resolvemos el destinatario antes de que el efecto cambie
+        // o cierre el ataque. Esquivar no utiliza este argumento.
+        String objetivoDelEfecto = ataquePendiente.atacante();
+
+        // Todas las validaciones anteriores se conservan.
+        // Consumimos únicamente la carta que pertenece a quien responde.
         mano.remove(defensa);
         mazo.descartar(defensa);
 
-        if (defensa.tipo() == TipoCarta.ESQUIVAR) {
-            registrarEvento(identificador, "usa Esquivar y bloquea la bola.", null);
-            // La bola queda bloqueada y continúa el mismo turno.
-            cerrarAtaquePendiente();
-        } else {
-            // La bola regresa a quien la lanzó o devolvió anteriormente.
-            // No descontamos otra Bola de nieve ni usamos otro turno.
-            String nuevoObjetivo = ataquePendiente.atacante();
-
-            // Comprobamos también las defensas del nuevo objetivo tras cada rebote.
-            ataquePendiente = crearAtaquePendiente(identificador, nuevoObjetivo);
-
-            registrarEvento(identificador, "devuelve la bola a", nuevoObjetivo);
-            // Conservamos pausado el reloj original.
-            // Cada rebote abre un nuevo minuto de respuesta.
-        }
+        // Cada defensa resuelve su comportamiento en su propia clase.
+        efectosPorTipo.get(defensa.tipo())
+                .aplicar(contextoEfectos, identificador, objetivoDelEfecto);
 
         return true;
     }

@@ -196,3 +196,12 @@ están pendientes de implementar.
 - Al iniciar la partida se conserva el historial del lobby.
 - Se verificó manualmente el envío de mensajes, la actividad del juego
   y la recuperación del historial en orden y sin duplicados al reconectar.
+
+  ### Separación inicial de efectos de cartas — 27/11/2026
+
+- Se creó la interfaz EfectoCarta y el contrato ContextoEfectoCarta.
+- Bola de nieve, Esquivar y Devolver tienen clases de efecto propias.
+- Partida valida las solicitudes y delega la ejecución del efecto.
+- El contexto permite operar sin exponer las colecciones internas.
+- Se verificó que el combate mantiene su comportamiento anterior.
+- Queda pendiente separar la gestión del combate de Partida.
