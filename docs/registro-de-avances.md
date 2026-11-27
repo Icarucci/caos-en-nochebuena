@@ -215,3 +215,20 @@ están pendientes de implementar.
 - Las pruebas Maven finalizaron correctamente.
 - Se verificaron manualmente defensas, devoluciones, daño automático,
   abandonos durante ataques y eliminaciones.
+
+  ### Cartas de comida — 27/11/2026
+
+- Se implementó EfectoCuracion, configurable por cantidad y alcance.
+- Las comidas individuales recuperan una vida a quien las juega.
+- Asado y Lechón con ensalada rusa recuperan una vida a todos los
+  participantes activos, incluidos los enemigos.
+- La curación no supera las vidas iniciales del rol ni revive eliminados.
+- Solo pueden usarse durante el turno propio, sin ataques pendientes.
+- Si nadie puede recuperar vidas, la carta no se consume.
+- Se permite usar varias comidas en el mismo turno.
+- El servidor valida la propiedad de la carta y todas las condiciones.
+- Las comidas utilizadas pasan al descarte y se registran en la actividad.
+- Se verificó manualmente el funcionamiento individual y grupal,
+  los límites de vidas y los permisos de uso.
+- Los botones actuales son provisorios. En React se seleccionará la
+  carta con clic o toque y se confirmará su uso antes de enviarlo.

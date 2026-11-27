@@ -1,5 +1,7 @@
 package com.icarucci.caosennochebuena.modelo.efecto;
 
+import java.util.List;
+
 // Define las operaciones que un efecto puede solicitar a la partida.
 // No expone mapas de jugadores, manos ni otros datos modificables.
 public interface ContextoEfectoCarta {
@@ -17,4 +19,12 @@ public interface ContextoEfectoCarta {
             String jugador,
             String descripcion,
             String objetivo);
+
+    // Devuelve los identificadores de quienes siguen participando.
+    // Un jugador desconectado conserva su participación.
+    List<String> getParticipantesActivos();
+
+    // Recupera vidas sin superar el máximo del rol.
+    // Devuelve cuántas vidas se recuperaron realmente.
+    int recuperarVidas(String jugador, int cantidad);
 }
