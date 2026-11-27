@@ -205,3 +205,13 @@ están pendientes de implementar.
 - El contexto permite operar sin exponer las colecciones internas.
 - Se verificó que el combate mantiene su comportamiento anterior.
 - Queda pendiente separar la gestión del combate de Partida.
+
+### Extracción del estado de combate — 27/11/2026
+
+- Se trasladaron a Combate el ataque pendiente y sus plazos de respuesta.
+- Partida delega la apertura, el cierre y las consultas del ataque.
+- Se conservaron el minuto de respuesta y los cinco segundos de ayuda
+  cuando el objetivo no tiene defensa.
+- Las pruebas Maven finalizaron correctamente.
+- Se verificaron manualmente defensas, devoluciones, daño automático,
+  abandonos durante ataques y eliminaciones.
