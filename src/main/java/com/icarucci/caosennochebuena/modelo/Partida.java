@@ -11,12 +11,15 @@ import java.util.List;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.time.Duration;
+import java.util.EnumMap;
 
 import com.icarucci.caosennochebuena.modelo.efecto.ContextoEfectoCarta;
 import com.icarucci.caosennochebuena.modelo.efecto.EfectoCarta;
 import com.icarucci.caosennochebuena.modelo.efecto.EfectoBolaDeNieve;
 import com.icarucci.caosennochebuena.modelo.efecto.EfectoEsquivar;
 import com.icarucci.caosennochebuena.modelo.efecto.EfectoDevolver;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoCuracion;
+
 
 public class Partida {
 
@@ -81,15 +84,12 @@ public class Partida {
 
     // Asociamos los tipos implementados con sus comportamientos.
     // Los efectos no guardan información particular de un jugador.
-    private final Map<TipoCarta, EfectoCarta> efectosPorTipo = Map.of(
-            TipoCarta.BOLA_DE_NIEVE, new EfectoBolaDeNieve(),
-            TipoCarta.ESQUIVAR, new EfectoEsquivar(),
-            TipoCarta.DEVOLVER, new EfectoDevolver());
+    // Construimos una sola vez la asociación entre cartas y efectos.
+    private final Map<TipoCarta, EfectoCarta> efectosPorTipo = crearEfectosDeCartas();
 
     // Adaptador privado entre los efectos y el estado de esta partida.
     // No se entrega al navegador ni se expone mediante un getter.
-    private final ContextoEfectoCarta contextoEfectos =
-            new ContextoEfectoCarta() {
+    private final ContextoEfectoCarta contextoEfectos = new ContextoEfectoCarta() {
 
                 @Override
                 public void abrirAtaque(String atacante, String objetivo) {
@@ -119,7 +119,87 @@ public class Partida {
                     Partida.this.registrarEvento(
                             jugador, descripcion, objetivo);
                 }
-            };
+
+                @Override
+                public List<String> getParticipantesActivos() {
+                    // Devolvemos una lista sin exponer la colección interna.
+                    // sigueParticipando excluye abandonados y eliminados,
+                    // pero conserva a quienes están reconectando.
+                    return roles.keySet().stream()
+                            .filter(Partida.this::sigueParticipando)
+                            .toList();
+                }
+
+                @Override
+                public int recuperarVidas(String jugador, int cantidad) {
+                    // Curar no puede revivir a un eliminado
+                    // ni afectar a alguien que abandonó.
+                    if (fase != Fase.EN_JUEGO
+                            || cantidad <= 0
+                            || !sigueParticipando(jugador)) {
+                        return 0;
+                    }
+
+                    int vidasActuales = vidasPorJugador.get(jugador);
+                    int vidasMaximas = roles.get(jugador).getVidasIniciales();
+
+                    // Calculamos el espacio disponible antes de sumar.
+                    // Así nunca superamos las vidas máximas del rol.
+                    int recuperadas = Math.min(
+                            cantidad,
+                            Math.max(0, vidasMaximas - vidasActuales));
+
+                    if (recuperadas > 0) {
+                        vidasPorJugador.put(
+                                jugador,
+                                vidasActuales + recuperadas);
+
+                        registrarEvento(
+                                jugador,
+                                "recupera " + recuperadas
+                                        + " vida(s). Ahora tiene "
+                                        + (vidasActuales + recuperadas) + ".",
+                                null);
+                    }
+
+                    return recuperadas;
+                }
+    };
+
+
+    private Map<TipoCarta, EfectoCarta> crearEfectosDeCartas() {
+        // EnumMap utiliza los valores de TipoCarta como claves.
+        Map<TipoCarta, EfectoCarta> efectos =
+                new EnumMap<>(TipoCarta.class);
+
+        efectos.put(TipoCarta.BOLA_DE_NIEVE, new EfectoBolaDeNieve());
+        efectos.put(TipoCarta.ESQUIVAR, new EfectoEsquivar());
+        efectos.put(TipoCarta.DEVOLVER, new EfectoDevolver());
+
+        // Todas las comidas actuales recuperan una vida.
+        // Compartimos la implementación y configuramos su alcance y nombre.
+        for (TipoCarta tipo : TipoCarta.values()) {
+            if (tipo.getCategoria() != CategoriaCarta.COMIDA) {
+                continue;
+            }
+
+            EfectoCuracion.Alcance alcance = esComidaGrupal(tipo)
+                    ? EfectoCuracion.Alcance.TODOS
+                    : EfectoCuracion.Alcance.PROPIO;
+
+            efectos.put(
+                    tipo,
+                    new EfectoCuracion(1, alcance, tipo.getNombre()));
+        }
+
+        // El registro queda protegido contra modificaciones posteriores.
+        return Map.copyOf(efectos);
+    }
+
+    private boolean esComidaGrupal(TipoCarta tipo) {
+        return tipo == TipoCarta.ASADO
+                || tipo == TipoCarta.LECHON_CON_ENSALADA_RUSA;
+    }
 
     public Partida(Map<String, Rol> roles) {
         this.roles = Map.copyOf(roles);
@@ -470,6 +550,86 @@ public class Partida {
                         || carta.tipo() == TipoCarta.DEVOLVER);
     }
 
+
+    public synchronized boolean puedeUsarComida(
+            String jugador, String identificadorCarta) {
+
+        // Sirve para informar al frontend qué cartas puede habilitar.
+        // Al jugar una comida volvemos a comprobar todas las condiciones.
+        return buscarComidaUtilizable(jugador, identificadorCarta) != null;
+    }
+
+    public synchronized boolean usarComida(
+            String jugador, String identificadorCarta) {
+
+        Carta comida = buscarComidaUtilizable(jugador, identificadorCarta);
+
+        if (comida == null) {
+            return false;
+        }
+
+        EfectoCarta efecto = efectosPorTipo.get(comida.tipo());
+
+        // Una carta sin efecto implementado no debe consumirse.
+        if (efecto == null) {
+            return false;
+        }
+
+        // Todas las condiciones fueron comprobadas antes de modificar la mano.
+        manosPorJugador.get(jugador).remove(comida);
+        mazo.descartar(comida);
+
+        // Comer no consume el permiso de lanzar una Bola de nieve.
+        // El reloj del turno continúa corriendo.
+        efecto.aplicar(contextoEfectos, jugador, null);
+
+        return true;
+    }
+
+    private Carta buscarComidaUtilizable(
+            String jugador, String identificadorCarta) {
+
+        // Solo se puede comer durante el turno propio,
+        // mientras siga participando y no haya un ataque pendiente.
+        if (fase != Fase.EN_JUEGO
+                || combate.hayAtaquePendiente()
+                || !sigueParticipando(jugador)
+                || !jugador.equals(getJugadorDeTurno())
+                || identificadorCarta == null
+                || System.nanoTime() - vencimientoDelTurno >= 0) {
+            return null;
+        }
+
+        // Buscamos el ejemplar exacto en la mano real del jugador.
+        Carta comida = manosPorJugador.getOrDefault(jugador, List.of())
+                .stream()
+                .filter(carta ->
+                        carta.identificador().equals(identificadorCarta)
+                        && carta.tipo().getCategoria() == CategoriaCarta.COMIDA)
+                .findFirst()
+                .orElse(null);
+
+        if (comida == null) {
+            return null;
+        }
+
+        // Una comida grupal puede servir aunque quien la juega
+        // tenga todas sus vidas: alcanza con que otro pueda recuperarse.
+        boolean alguienPuedeRecuperarse = esComidaGrupal(comida.tipo())
+                ? roles.keySet().stream()
+                        .anyMatch(this::puedeRecuperarVidas)
+                : puedeRecuperarVidas(jugador);
+
+        // Si nadie puede beneficiarse, conservamos la carta en la mano.
+        return alguienPuedeRecuperarse ? comida : null;
+    }
+
+    private boolean puedeRecuperarVidas(String jugador) {
+        // Excluye eliminados y abandonados; incluye desconectados.
+        return sigueParticipando(jugador)
+                && vidasPorJugador.get(jugador)
+                        < roles.get(jugador).getVidasIniciales();
+    }
 
     public synchronized boolean lanzarBolaDeNieve(String atacante, String identificadorCarta, String objetivo) {
 

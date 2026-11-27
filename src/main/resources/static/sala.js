@@ -36,6 +36,8 @@ let jugadoresEliminados = [];
 let rolesRevelados = new Map();
 // Datos recibidos del servidor para dibujar los controles de combate.
 let manoActual = [];
+// El servidor informa cuáles de nuestras comidas podemos usar.
+let comidasDisponibles = new Set();
 let vidasPorNombre = new Map();
 let ataqueActual = null;
 let permisoParaAtacar = false;
@@ -80,6 +82,9 @@ function borrarAccesosDeSala(codigo) {
 
 function mostrarResultadoPartida(resultado, gano) {
   partidaFinalizada = true;
+  // Al terminar, ninguna comida debe seguir habilitada.
+  comidasDisponibles.clear();
+  actualizarControlesComida();
   faseActual = "TERMINADA";
   permisoParaAtacar = false;
   ataqueActual = null;
@@ -291,6 +296,9 @@ function conectar(sesion, accion) {
   // Recordamos el asiento anterior antes de reemplazar al jugador actual.
   const sesionAnterior = jugador;
   jugador = sesion;
+  // No conservamos permisos de una conexión anterior.
+  comidasDisponibles.clear();
+  actualizarControlesComida();
   partidaFinalizada = false;
   iniciada = false;
   soyAnfitrion = false;
@@ -421,6 +429,17 @@ function conectar(sesion, accion) {
       actualizarControlesCombate();
       return;
     }
+    if (mensaje.startsWith("comidas-disponibles:")) {
+      const texto = mensaje.slice("comidas-disponibles:".length);
+
+      // Los identificadores corresponden únicamente a nuestras cartas.
+      comidasDisponibles = new Set(
+        texto === "" ? [] : texto.split("\n")
+      );
+
+      actualizarControlesComida();
+      return;
+    }
     if (mensaje.startsWith("mano:")) {
       const texto = mensaje.slice("mano:".length);
       const datos = texto === "" ? [] : texto.split("\n");
@@ -442,6 +461,30 @@ function conectar(sesion, accion) {
         // implementemos jugar y descartar cartas.
         elemento.dataset.identificador = identificador;
         elemento.dataset.tipo = tipo;
+
+        if (categoria === "COMIDA") {
+          const botonComida = document.createElement("button");
+
+          botonComida.type = "button";
+          botonComida.textContent = "Usar comida";
+          botonComida.dataset.comida = identificador;
+          botonComida.disabled = true;
+
+          botonComida.addEventListener("click", () => {
+            if (botonComida.disabled || partidaFinalizada) {
+              return;
+            }
+
+            // Enviamos el identificador del ejemplar, sin indicar
+            // cantidades de curación ni destinatarios desde el navegador.
+            if (enviar(`usar-comida:${identificador}`)) {
+              // Evitamos repetir el clic mientras llega la actualización.
+              botonComida.disabled = true;
+            }
+          });
+
+          elemento.append(" ", botonComida);
+        }
 
         // Marcar una carta no la descarta inmediatamente.
         // La selección se envía recién al tocar Terminar turno.
@@ -472,6 +515,8 @@ function conectar(sesion, accion) {
         : "No necesitás descartar para terminar tu turno.";
 
       porId("zona-cartas").hidden = false;
+      // Los botones recién creados recuperan los permisos del servidor.
+      actualizarControlesComida();
       actualizarControlesCombate();
       return;
     }
@@ -755,6 +800,15 @@ function conectar(sesion, accion) {
       || evento.code === 1011 || evento.code === 1001)) {
       mostrarRecuperacion(jugador);
     }
+  });
+}
+
+function actualizarControlesComida() {
+  document.querySelectorAll("button[data-comida]").forEach((boton) => {
+    // La interfaz refleja el permiso recibido.
+    // Java vuelve a validarlo cuando intentamos jugar la carta.
+    boton.disabled = partidaFinalizada
+      || !comidasDisponibles.has(boton.dataset.comida);
   });
 }
 

@@ -166,3 +166,16 @@ y permite consultar su vencimiento y los segundos restantes.
 Partida conserva la coordinación de turnos, manos, vidas, daño,
 eliminaciones y resultado. Sus métodos sincronizados protegen también
 las operaciones que delega en Combate.
+
+### Efectos de curación
+
+EfectoCuracion implementa EfectoCarta y se configura con cantidad,
+alcance y nombre de la carta. Las comidas reutilizan esta implementación.
+
+Partida valida la jugada antes de consumir la carta. El contexto permite
+consultar participantes activos y recuperar vidas sin exponer los mapas
+internos. Partida aplica el límite de vidas y registra la recuperación.
+
+El frontend recibe los identificadores de las comidas propias utilizables.
+Estos permisos sirven para presentar los controles; el servidor vuelve
+a comprobarlos al recibir cada solicitud.

@@ -293,6 +293,25 @@ public class JuegoWebSocket extends TextWebSocketHandler {
         if (registroSalas.estaIniciada(codigoSala)) {
             Partida partida = registroSalas.partidaDe(codigoSala);
             String identificador = buscarIdentificador(origen);
+            if (texto.startsWith("usar-comida:")) {
+                String identificadorCarta =
+                        texto.substring("usar-comida:".length());
+
+                // La identidad se obtiene de la conexión.
+                // Partida comprueba turno, plazo, propiedad de la carta
+                // y que alguien pueda recuperar vidas.
+                if (partida.usarComida(identificador, identificadorCarta)) {
+                    // Publicamos la actividad y actualizamos manos,
+                    // descarte y vidas de todos los participantes.
+                    avisarPreparacionSala(codigoSala);
+                } else {
+                    // Ante una solicitud inválida, recuperamos
+                    // el estado real de quien la envió.
+                    enviarEstadoPreparacion(identificador, jugador);
+                }
+
+                return;
+            }
             if ("terminar-turno".equals(texto)|| texto.startsWith("terminar-turno:")) {
 
                 // Los clientes pueden enviar los identificadores de las cartas
@@ -506,6 +525,21 @@ public class JuegoWebSocket extends TextWebSocketHandler {
         if (partida == null) {
             return;
         }
+
+        // Enviamos únicamente identificadores de comidas propias utilizables.
+        // Una lista vacía significa que ninguna está habilitada actualmente.
+        String comidasDisponibles = partida.getManoDe(identificador).stream()
+                .filter(carta ->
+                        carta.tipo().getCategoria()
+                                == com.icarucci.caosennochebuena.modelo
+                                        .CategoriaCarta.COMIDA)
+                .filter(carta ->
+                        partida.puedeUsarComida(
+                                identificador, carta.identificador()))
+                .map(carta -> carta.identificador())
+                .collect(java.util.stream.Collectors.joining("\n"));
+
+        enviar(jugador, "comidas-disponibles:" + comidasDisponibles);
 
         // Las vidas son públicas. No incluimos roles ni manos ajenas.
         String vidas = jugadores.entrySet().stream()
