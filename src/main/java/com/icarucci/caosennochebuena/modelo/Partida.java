@@ -11,19 +11,18 @@ import java.util.List;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.time.Duration;
-import java.util.UUID;
+
+import com.icarucci.caosennochebuena.modelo.efecto.ContextoEfectoCarta;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoCarta;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoBolaDeNieve;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoEsquivar;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoDevolver;
 
 public class Partida {
 
     // Cada turno dura un minuto. Medimos el tiempo transcurrido
     // con nanoTime para no depender de cambios en la hora del servidor.
     private static final long DURACION_TURNO_NANOS = Duration.ofMinutes(1).toNanos();
-
-    // La respuesta tiene su propio minuto, separado del tiempo del turno.
-    private static final long DURACION_RESPUESTA_NANOS = Duration.ofMinutes(1).toNanos();    
-
-    // Tiempo para que otros intervengan cuando el objetivo no puede defenderse.
-    private static final long DURACION_AYUDA_NANOS = Duration.ofSeconds(5).toNanos();
 
     public enum Fase {
         REPARTO_DE_ROLES,
@@ -60,8 +59,8 @@ public class Partida {
     private int posicionDeTurno = 0;
     // Instante límite del turno actual, según el reloj monotónico del servidor.
     private long vencimientoDelTurno;
-    // Mientras sea null, no hay una bola esperando respuesta.
-    private AtaquePendiente ataquePendiente;
+    // Cada partida administra sus ataques mediante su propio Combate.
+    private final Combate combate = new Combate();
 
     // Tiempo que conservamos del turno mientras se resuelve el ataque.
     private long tiempoDeTurnoPausado;
@@ -79,6 +78,48 @@ public class Partida {
     // Acumulamos sucesos públicos hasta que WebSocket los publique.
     // No guardamos aquí el contenido de las manos.
     private final List<EventoActividad> eventosPendientes = new ArrayList<>();
+
+    // Asociamos los tipos implementados con sus comportamientos.
+    // Los efectos no guardan información particular de un jugador.
+    private final Map<TipoCarta, EfectoCarta> efectosPorTipo = Map.of(
+            TipoCarta.BOLA_DE_NIEVE, new EfectoBolaDeNieve(),
+            TipoCarta.ESQUIVAR, new EfectoEsquivar(),
+            TipoCarta.DEVOLVER, new EfectoDevolver());
+
+    // Adaptador privado entre los efectos y el estado de esta partida.
+    // No se entrega al navegador ni se expone mediante un getter.
+    private final ContextoEfectoCarta contextoEfectos =
+            new ContextoEfectoCarta() {
+
+                @Override
+                public void abrirAtaque(String atacante, String objetivo) {
+                    // Partida conoce la mano del objetivo y consulta
+                    // si dispone de alguna defensa implementada.
+                    //
+                    // Combate crea el ataque y determina su plazo.
+                    combate.abrirAtaque(
+                            atacante,
+                            objetivo,
+                            tieneDefensaDisponible(objetivo));
+                }
+
+                @Override
+                public void cerrarAtaque() {
+                    // Recupera el tiempo restante del turno original.
+                    cerrarAtaquePendiente();
+                }
+
+                @Override
+                public void registrarEvento(
+                        String jugador,
+                        String descripcion,
+                        String objetivo) {
+
+                    // Delegamos en el registro público que ya utiliza el chat.
+                    Partida.this.registrarEvento(
+                            jugador, descripcion, objetivo);
+                }
+            };
 
     public Partida(Map<String, Rol> roles) {
         this.roles = Map.copyOf(roles);
@@ -125,9 +166,9 @@ public class Partida {
                 && identificador.equals(getJugadorDeTurno());
 
         boolean cancelaAtaque =
-                ataquePendiente != null
-                && (identificador.equals(ataquePendiente.atacante())
-                    || identificador.equals(ataquePendiente.objetivo())
+                combate.getAtaquePendiente() != null
+                && (identificador.equals(combate.getAtaquePendiente().atacante())
+                    || identificador.equals(combate.getAtaquePendiente().objetivo())
                     || abandonoElJugadorDeTurno);
 
         jugadoresQueAbandonaron.add(identificador);
@@ -149,7 +190,7 @@ public class Partida {
         if (fase == Fase.TERMINADA) {
             // También cerramos cualquier espera si el abandono de otro
             // participante terminó la partida, por ejemplo, Papá Noel.
-            if (ataquePendiente != null) {
+            if (combate.getAtaquePendiente() != null) {
                 cerrarAtaquePendiente();
             }
 
@@ -310,7 +351,7 @@ public class Partida {
     public synchronized boolean terminarTurno(String identificador, List<String> cartasADescartar) {
 
         if (fase != Fase.EN_JUEGO
-                || ataquePendiente != null
+                || combate.getAtaquePendiente() != null
                 || !ordenDeTurnos.get(posicionDeTurno).equals(identificador)
                 || jugadoresQueAbandonaron.contains(identificador)
                 || jugadoresEliminados.contains(identificador)) {
@@ -429,31 +470,13 @@ public class Partida {
                         || carta.tipo() == TipoCarta.DEVOLVER);
     }
 
-    private AtaquePendiente crearAtaquePendiente(
-            String atacante, String objetivo) {
-
-        boolean sinDefensaPropia = !tieneDefensaDisponible(objetivo);
-
-        // Con defensa propia dispone del minuto habitual.
-        // Sin defensa, solo esperamos los cinco segundos de posible ayuda.
-        long duracion = sinDefensaPropia
-                ? DURACION_AYUDA_NANOS
-                : DURACION_RESPUESTA_NANOS;
-
-        return new AtaquePendiente(
-                UUID.randomUUID().toString(),
-                atacante,
-                objetivo,
-                System.nanoTime() + duracion,
-                sinDefensaPropia);
-    }
 
     public synchronized boolean lanzarBolaDeNieve(String atacante, String identificadorCarta, String objetivo) {
 
         // Solo puede lanzar el jugador de turno, mientras no haya
         // otro ataque pendiente y conserve su permiso para lanzar.
         if (fase != Fase.EN_JUEGO
-                || ataquePendiente != null
+                || combate.getAtaquePendiente() != null
                 || bolaDeNieveUsada
                 || !sigueParticipando(atacante)
                 || !atacante.equals(getJugadorDeTurno())) {
@@ -494,8 +517,8 @@ public class Partida {
 
         // Abrimos una espera nueva, con su propio identificador y plazo.
         // Las vidas todavía no cambian: primero puede haber una defensa.
-        ataquePendiente = crearAtaquePendiente(atacante, objetivo);
-        registrarEvento(atacante, "lanza una Bola de nieve a", objetivo);
+        // Ejecutamos el comportamiento asociado a la carta ya validada.
+        efectosPorTipo.get(bola.tipo()).aplicar(contextoEfectos, atacante, objetivo);
 
         return true;
     }
@@ -505,17 +528,18 @@ public class Partida {
         // Solo puede responder el objetivo del ataque actual.
         // El identificador del ataque evita aceptar respuestas atrasadas.
         if (fase != Fase.EN_JUEGO
-                || ataquePendiente == null
-                || ataquePendiente.sinDefensaPropia()
-                || !ataquePendiente.identificador().equals(identificadorAtaque)
-                || !ataquePendiente.objetivo().equals(identificador)
+                || combate.getAtaquePendiente() == null
+                || combate.getAtaquePendiente().sinDefensaPropia()
+                || !combate.getAtaquePendiente().identificador().equals(identificadorAtaque)
+                || !combate.getAtaquePendiente().objetivo().equals(identificador)
                 || !sigueParticipando(identificador)
                 || identificadorCarta == null) {
             return false;
         }
 
         // Si venció la respuesta, su resultado lo procesa el servidor.
-        if (System.nanoTime() - ataquePendiente.vencimientoRespuesta() >= 0) {
+        // Combate determina si el plazo ya terminó.
+        if (combate.vencioRespuesta()) {
             return false;
         }
 
@@ -542,50 +566,42 @@ public class Partida {
 
         // Para devolver, el otro participante debe seguir en juego.
         if (defensa.tipo() == TipoCarta.DEVOLVER
-                && !sigueParticipando(ataquePendiente.atacante())) {
+                && !sigueParticipando(combate.getAtaquePendiente().atacante())) {
             return false;
         }
 
-        // Validamos todo antes de consumir la carta.
+        // Resolvemos el destinatario antes de que el efecto cambie
+        // o cierre el ataque. Esquivar no utiliza este argumento.
+        String objetivoDelEfecto = combate.getAtaquePendiente().atacante();
+
+        // Todas las validaciones anteriores se conservan.
+        // Consumimos únicamente la carta que pertenece a quien responde.
         mano.remove(defensa);
         mazo.descartar(defensa);
 
-        if (defensa.tipo() == TipoCarta.ESQUIVAR) {
-            registrarEvento(identificador, "usa Esquivar y bloquea la bola.", null);
-            // La bola queda bloqueada y continúa el mismo turno.
-            cerrarAtaquePendiente();
-        } else {
-            // La bola regresa a quien la lanzó o devolvió anteriormente.
-            // No descontamos otra Bola de nieve ni usamos otro turno.
-            String nuevoObjetivo = ataquePendiente.atacante();
-
-            // Comprobamos también las defensas del nuevo objetivo tras cada rebote.
-            ataquePendiente = crearAtaquePendiente(identificador, nuevoObjetivo);
-
-            registrarEvento(identificador, "devuelve la bola a", nuevoObjetivo);
-            // Conservamos pausado el reloj original.
-            // Cada rebote abre un nuevo minuto de respuesta.
-        }
+        // Cada defensa resuelve su comportamiento en su propia clase.
+        efectosPorTipo.get(defensa.tipo())
+                .aplicar(contextoEfectos, identificador, objetivoDelEfecto);
 
         return true;
     }
 
     public synchronized boolean resolverAtaqueSiVencio() {
-        if (fase != Fase.EN_JUEGO || ataquePendiente == null) {
+        if (fase != Fase.EN_JUEGO || !combate.hayAtaquePendiente()) {
             return false;
         }
 
-        if (System.nanoTime() - ataquePendiente.vencimientoRespuesta() < 0) {
+        if (!combate.vencioRespuesta()) {
             return false;
         }
 
-        // No responder dentro del plazo equivale a recibir el daño.
+        // Partida sigue aplicando el daño y comprobando las eliminaciones.
         resolverDanioPendiente();
         return true;
     }
 
     private void resolverDanioPendiente() {
-        String objetivo = ataquePendiente.objetivo();
+        String objetivo = combate.getAtaquePendiente().objetivo();
 
         // Guardamos quién tenía el turno antes de aplicar el daño.
         // Una bola devuelta puede eliminar al jugador de turno.
@@ -622,7 +638,8 @@ public class Partida {
     }
 
     private void cerrarAtaquePendiente() {
-        ataquePendiente = null;
+        // Combate finaliza la espera; Partida recupera el reloj del turno.
+        combate.cerrarAtaque();
 
         // Solo reanudamos si la partida sigue en juego.
         if (fase == Fase.EN_JUEGO) {
@@ -636,7 +653,7 @@ public class Partida {
         // Este permiso sirve para dibujar los controles.
         // Al recibir la acción, lanzarBolaDeNieve vuelve a validarla.
         return fase == Fase.EN_JUEGO
-                && ataquePendiente == null
+                && combate.getAtaquePendiente() == null
                 && !bolaDeNieveUsada
                 && sigueParticipando(identificador)
                 && identificador.equals(getJugadorDeTurno())
@@ -647,24 +664,18 @@ public class Partida {
 
 
     public synchronized AtaquePendiente getAtaquePendiente() {
-        // El record es inmutable: consultarlo no permite modificar el ataque.
-        return ataquePendiente;
+        // Consultamos el ataque administrado por Combate.
+        // El record es inmutable: no permite modificar sus datos.
+        return combate.getAtaquePendiente();
     }
 
     public synchronized int getSegundosRestantesDeRespuesta() {
-        if (fase != Fase.EN_JUEGO || ataquePendiente == null) {
+        // Fuera del juego no mostramos un plazo de respuesta activo.
+        if (fase != Fase.EN_JUEGO) {
             return 0;
         }
 
-        long restantes = ataquePendiente.vencimientoRespuesta() - System.nanoTime();
-
-        if (restantes <= 0) {
-            return 0;
-        }
-
-        // Redondeamos hacia arriba, igual que en el reloj del turno.
-        long segundoEnNanos = Duration.ofSeconds(1).toNanos();
-        return (int) ((restantes + segundoEnNanos - 1) / segundoEnNanos);
+        return combate.getSegundosRestantesDeRespuesta();
     }
 
 
@@ -678,7 +689,7 @@ public class Partida {
         }
 
         // Mientras se responde, el reloj del turno muestra el tiempo pausado.
-        long restantes = ataquePendiente != null
+        long restantes = combate.getAtaquePendiente() != null
                 ? tiempoDeTurnoPausado
                 : vencimientoDelTurno - System.nanoTime();
 
@@ -694,7 +705,7 @@ public class Partida {
 
     public synchronized boolean finalizarTurnoSiVencio() {
         // No finalizamos el turno mientras hay una respuesta pendiente.
-        if (fase != Fase.EN_JUEGO || ataquePendiente != null) {
+        if (fase != Fase.EN_JUEGO || combate.getAtaquePendiente() != null) {
             return false;
         }
 

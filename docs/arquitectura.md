@@ -141,3 +141,28 @@ cronológico, sin modificar su pertenencia ni sus permisos.
 
 La persistencia de mensajes, los canales separados y la mensajería
 privada son funcionalidades planificadas, todavía no implementadas.
+
+## Efectos de cartas y combate
+
+Carta representa un ejemplar identificado por su ID y su tipo.
+Los comportamientos se separan mediante la interfaz EfectoCarta.
+
+Actualmente existen tres implementaciones:
+
+- EfectoBolaDeNieve.
+- EfectoEsquivar.
+- EfectoDevolver.
+
+Partida valida la solicitud y consume la carta antes de ejecutar su efecto.
+Un adaptador privado implementa ContextoEfectoCarta y permite a los
+efectos solicitar operaciones sin exponer las colecciones internas.
+
+Esta organización utiliza composición y el patrón Strategy:
+cada comportamiento implementa un contrato común.
+
+Combate conserva el ataque pendiente, crea los plazos de respuesta
+y permite consultar su vencimiento y los segundos restantes.
+
+Partida conserva la coordinación de turnos, manos, vidas, daño,
+eliminaciones y resultado. Sus métodos sincronizados protegen también
+las operaciones que delega en Combate.
