@@ -74,6 +74,9 @@ public class Partida {
     // Cada partida tiene su propio mazo y descarte.
     private final Mazo mazo = new Mazo();
 
+    // Conserva el equipo activo de cada jugador, separado de su mano.
+    private final Equipamiento equipamiento = new Equipamiento();
+
     // Cada identificador tiene una mano independiente.
     // Solo Partida modifica estas listas.
     private final Map<String, List<Carta>> manosPorJugador = new HashMap<>();
@@ -253,6 +256,9 @@ public class Partida {
 
         jugadoresQueAbandonaron.add(identificador);
         descartarManoDe(identificador);
+
+        // Abandonar libera también la zona de equipo.
+        desequipar(identificador);
 
         if (cancelaAtaque) {
             // Las cartas utilizadas siguen en el descarte.
@@ -550,6 +556,90 @@ public class Partida {
                         || carta.tipo() == TipoCarta.DEVOLVER);
     }
 
+    public synchronized Carta getEquipoDe(String jugador) {
+        // El equipo activo es información pública.
+        // Carta es inmutable: devolverla no permite cambiar su contenido.
+        return equipamiento.getEquipoDe(jugador);
+    }
+
+    public synchronized boolean puedeEquiparCarta(
+            String jugador, String identificadorCarta) {
+
+        // Permite informar al frontend qué cartas puede habilitar.
+        return buscarEquipoUtilizable(jugador, identificadorCarta) != null;
+    }
+
+    public synchronized boolean equiparCarta(
+            String jugador, String identificadorCarta) {
+
+        // Validamos toda la solicitud antes de tocar el equipo anterior.
+        Carta nuevoEquipo =
+                buscarEquipoUtilizable(jugador, identificadorCarta);
+
+        if (nuevoEquipo == null) {
+            return false;
+        }
+
+        // Reutilizamos la acción desequipar:
+        // retira el equipo anterior y lo envía al descarte.
+        // Si no había equipo, no modifica nada.
+        desequipar(jugador);
+
+        // La carta nueva sale de la mano y ocupa la zona de equipo.
+        // No se descarta al equiparla.
+        manosPorJugador.get(jugador).remove(nuevoEquipo);
+        equipamiento.colocarEquipo(jugador, nuevoEquipo);
+
+        registrarEvento(
+                jugador,
+                "equipa " + nuevoEquipo.tipo().getNombre() + ".",
+                null);
+
+        return true;
+    }
+
+    private Carta buscarEquipoUtilizable(
+            String jugador, String identificadorCarta) {
+
+        // Solo permitimos equipar durante el turno propio,
+        // sin ataques pendientes y antes de que venza el tiempo.
+        if (fase != Fase.EN_JUEGO
+                || combate.hayAtaquePendiente()
+                || !sigueParticipando(jugador)
+                || !jugador.equals(getJugadorDeTurno())
+                || identificadorCarta == null
+                || System.nanoTime() - vencimientoDelTurno >= 0) {
+            return null;
+        }
+
+        // Comprobamos el ejemplar exacto y su categoría en la mano real.
+        return manosPorJugador.getOrDefault(jugador, List.of()).stream()
+                .filter(carta ->
+                        carta.identificador().equals(identificadorCarta)
+                        && carta.tipo().getCategoria() == CategoriaCarta.EQUIPO)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private boolean desequipar(String jugador) {
+        // Retirar y descartar son pasos distintos.
+        // Un futuro robo reutilizará retirarEquipoDe sin descartar la carta.
+        Carta equipoRetirado = equipamiento.retirarEquipoDe(jugador);
+
+        if (equipoRetirado == null) {
+            return false;
+        }
+
+        mazo.descartar(equipoRetirado);
+
+        registrarEvento(
+                jugador,
+                "desequipa " + equipoRetirado.tipo().getNombre()
+                        + " y lo envía al descarte.",
+                null);
+
+        return true;
+    }
 
     public synchronized boolean puedeUsarComida(
             String jugador, String identificadorCarta) {
@@ -1012,6 +1102,9 @@ public class Partida {
         // y determinar si comparte la victoria al terminar la partida.
         vidasPorJugador.put(identificador, 0);
         descartarManoDe(identificador);
+
+        // También se descarta el equipo al eliminarse por daño o inactividad.
+        desequipar(identificador);
         // El rol solo se hace público cuando el jugador queda eliminado.
         registrarEvento(identificador,"queda eliminado. Su rol era " + roles.get(identificador).getNombre() + ".",null);
 

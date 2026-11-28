@@ -232,3 +232,18 @@ están pendientes de implementar.
   los límites de vidas y los permisos de uso.
 - Los botones actuales son provisorios. En React se seleccionará la
   carta con clic o toque y se confirmará su uso antes de enviarlo.
+
+  ### Zona de equipo — 27/11/2026
+
+- Se creó Equipamiento para administrar un equipo activo por jugador.
+- Equipar valida la carta y el turno antes de modificar el estado.
+- Si existe un equipo anterior, se desequipa y se envía al descarte
+  antes de colocar el nuevo.
+- La operación interna de retirar devuelve la carta sin descartarla,
+  permitiendo reutilizarla en un futuro robo de equipo.
+- Equipar está permitido durante el turno propio, sin ataques pendientes.
+- Los equipos son públicos y se conservan al reconectar.
+- Al abandonar o quedar eliminado, el equipo pasa al descarte.
+- Se verificaron manualmente estos comportamientos.
+- Los beneficios particulares y las cartas que quitan o roban equipos
+  siguen pendientes.

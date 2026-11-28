@@ -179,3 +179,18 @@ internos. Partida aplica el límite de vidas y registra la recuperación.
 El frontend recibe los identificadores de las comidas propias utilizables.
 Estos permisos sirven para presentar los controles; el servidor vuelve
 a comprobarlos al recibir cada solicitud.
+
+### Equipamiento
+
+Equipamiento conserva la carta activa de cada jugador sin administrar
+manos, descarte ni conexiones. Partida coordina sus operaciones dentro
+de sus métodos sincronizados.
+
+Las operaciones se distinguen de esta forma:
+
+- Retirar: libera la zona y devuelve la carta sin decidir su destino.
+- Desequipar: retira el equipo y lo envía al descarte.
+- Equipar: valida la solicitud, desequipa el anterior y coloca el nuevo.
+
+Un futuro robo de equipo podrá utilizar la retirada para transferir
+la carta, sin ejecutar el descarte.

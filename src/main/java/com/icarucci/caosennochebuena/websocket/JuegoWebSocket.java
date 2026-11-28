@@ -293,6 +293,24 @@ public class JuegoWebSocket extends TextWebSocketHandler {
         if (registroSalas.estaIniciada(codigoSala)) {
             Partida partida = registroSalas.partidaDe(codigoSala);
             String identificador = buscarIdentificador(origen);
+
+            if (texto.startsWith("equipar-carta:")) {
+                String identificadorCarta =
+                        texto.substring("equipar-carta:".length());
+
+                // Partida valida la carta, el turno y el plazo.
+                // La identidad del jugador proviene de la conexión.
+                if (partida.equiparCarta(identificador, identificadorCarta)) {
+                    // Actualizamos manos, descarte, equipos y actividad.
+                    avisarPreparacionSala(codigoSala);
+                } else {
+                    // Una solicitud rechazada recupera el estado real.
+                    enviarEstadoPreparacion(identificador, jugador);
+                }
+
+                return;
+            }
+
             if (texto.startsWith("usar-comida:")) {
                 String identificadorCarta =
                         texto.substring("usar-comida:".length());
@@ -518,6 +536,42 @@ public class JuegoWebSocket extends TextWebSocketHandler {
                 + partida.getCantidadCartasEnDescarte());
     }
 
+    private void enviarEstadoEquipamiento(String identificador, Jugador jugador, Partida partida) {
+
+        // Cada jugador recibe únicamente los identificadores
+        // de sus propias cartas que puede equipar.
+        String disponibles = partida.getManoDe(identificador).stream()
+                .filter(carta ->
+                        partida.puedeEquiparCarta(
+                                identificador, carta.identificador()))
+                .map(carta -> carta.identificador())
+                .collect(java.util.stream.Collectors.joining("\n"));
+
+        enviar(jugador, "equipos-disponibles:" + disponibles);
+
+        // Los equipos activos son públicos.
+        // Cada grupo contiene dos líneas: jugador y nombre del equipo.
+        List<String> equiposPublicos = new ArrayList<>();
+
+        for (var entrada : jugadores.entrySet()) {
+            Jugador participante = entrada.getValue();
+
+            if (!jugador.codigoSala().equals(participante.codigoSala())) {
+                continue;
+            }
+
+            var equipo = partida.getEquipoDe(entrada.getKey());
+
+            if (equipo != null) {
+                equiposPublicos.add(participante.nombre());
+                equiposPublicos.add(equipo.tipo().getNombre());
+            }
+        }
+
+        // Enviamos la lista completa, incluso vacía, para que la interfaz
+        // también pueda quitar los equipos que dejaron de estar activos.
+        enviar(jugador, "equipos:" + String.join("\n", equiposPublicos));
+    }
 
     private void enviarEstadoCombate(String identificador, Jugador jugador) {
         Partida partida = registroSalas.partidaDe(jugador.codigoSala());
@@ -525,6 +579,9 @@ public class JuegoWebSocket extends TextWebSocketHandler {
         if (partida == null) {
             return;
         }
+
+        // Se recupera al reconectar y se actualiza junto al combate.
+        enviarEstadoEquipamiento(identificador, jugador, partida);
 
         // Enviamos únicamente identificadores de comidas propias utilizables.
         // Una lista vacía significa que ninguna está habilitada actualmente.
