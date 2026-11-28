@@ -259,3 +259,17 @@ están pendientes de implementar.
 - Se incorporó al contexto una operación reutilizable de robo de cartas.
 - Las pruebas Maven finalizaron correctamente y se verificó manualmente
   el funcionamiento del equipo.
+
+  ### Beneficio de Bully navideño — 27/11/2026
+
+- Se implementó su activación automática al recibir daño de una Bola
+  de nieve, causando un daño directo e indefendible al atacante actual.
+- Esquivar o Devolver evita el daño y no activa Bully.
+- La represalia no consume el equipo ni activa otro Bully.
+- Bully no cuenta como defensa propia.
+- Primero se resuelve el daño al objetivo, su eliminación y el resultado.
+- Si la partida continúa, se aplica la represalia, aunque el dueño del
+  equipo haya quedado eliminado.
+- Si el primer daño termina la partida, no se aplica la represalia.
+- Si cae el jugador de turno y la partida continúa, se avanza al siguiente.
+- Se verificó manualmente el funcionamiento.

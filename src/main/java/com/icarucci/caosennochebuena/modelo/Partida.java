@@ -21,6 +21,8 @@ import com.icarucci.caosennochebuena.modelo.efecto.EfectoDevolver;
 import com.icarucci.caosennochebuena.modelo.efecto.EfectoCuracion;
 import com.icarucci.caosennochebuena.modelo.efecto.EfectoInicioTurno;
 import com.icarucci.caosennochebuena.modelo.efecto.EfectoArbolNavideno;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoAlRecibirDanio;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoBullyNavideno;
 
 
 public class Partida {
@@ -94,10 +96,10 @@ public class Partida {
 
     // Los beneficios de inicio de turno tienen su propio registro.
     // Equipar una carta no ejecuta automáticamente estos efectos.
-    private final Map<TipoCarta, EfectoInicioTurno> efectosDeInicioTurno =
-            Map.of(
-                    TipoCarta.ARBOL_NAVIDENO,
-                    new EfectoArbolNavideno());
+    private final Map<TipoCarta, EfectoInicioTurno> efectosDeInicioTurno = Map.of(TipoCarta.ARBOL_NAVIDENO,new EfectoArbolNavideno());
+
+    // Los efectos automáticos se agrupan por el momento en que se activan.
+    private final Map<TipoCarta, EfectoAlRecibirDanio> efectosAlRecibirDanio = Map.of(TipoCarta.BULLY_NAVIDENO,new EfectoBullyNavideno());
 
     // Adaptador privado entre los efectos y el estado de esta partida.
     // No se entrega al navegador ni se expone mediante un getter.
@@ -177,7 +179,7 @@ public class Partida {
                     return recuperadas;
                 }
 
-                                @Override
+                @Override
                 public int robarCartas(String jugador, int cantidad) {
                     // Los efectos no pueden entregar cartas a alguien
                     // eliminado o que haya abandonado.
@@ -208,6 +210,14 @@ public class Partida {
                     }
 
                     return robadas.size();
+                }
+
+                @Override
+                public int causarDanioDirecto(String objetivo, int cantidad) {
+                    // Partida conserva el control de vidas,
+                    // eliminaciones y resultado.
+                    return Partida.this.aplicarDanioDirecto(
+                            objetivo, cantidad);
                 }
     };
 
@@ -910,33 +920,87 @@ public class Partida {
         return true;
     }
 
+    private int aplicarDanioDirecto(String objetivo, int cantidad) {
+        // Un resultado ya determinado no puede modificarse
+        // mediante daños posteriores.
+        if (fase != Fase.EN_JUEGO
+                || cantidad <= 0
+                || !sigueParticipando(objetivo)) {
+            return 0;
+        }
+
+        int vidasActuales = vidasPorJugador.get(objetivo);
+        int danioAplicado = Math.min(cantidad, vidasActuales);
+        int vidasRestantes = vidasActuales - danioAplicado;
+
+        vidasPorJugador.put(objetivo, vidasRestantes);
+
+        registrarEvento(
+                objetivo,
+                "recibe " + danioAplicado
+                        + " de daño. Le quedan "
+                        + vidasRestantes + " vidas.",
+                null);
+
+        if (vidasRestantes == 0) {
+            // Eliminar descarta mano y equipo, revela el rol
+            // y comprueba inmediatamente si terminó la partida.
+            eliminarJugador(objetivo);
+        }
+
+        // No abrimos defensas ni ejecutamos efectos al recibir daño.
+        // La resolución de la bola decidirá cuándo activar esos efectos.
+        return danioAplicado;
+    }
+
     private void resolverDanioPendiente() {
-        String objetivo = combate.getAtaquePendiente().objetivo();
+        AtaquePendiente ataque = combate.getAtaquePendiente();
 
-        // Guardamos quién tenía el turno antes de aplicar el daño.
-        // Una bola devuelta puede eliminar al jugador de turno.
-        boolean objetivoTieneElTurno = objetivo.equals(getJugadorDeTurno());
+        if (ataque == null) {
+            return;
+        }
 
-        if (sigueParticipando(objetivo)) {
-            int vidasRestantes = Math.max(0, vidasPorJugador.get(objetivo) - 1);
-            vidasPorJugador.put(objetivo, vidasRestantes);
-            registrarEvento(objetivo,"recibe 1 de daño. Le quedan " + vidasRestantes + " vidas.",null);
+        String objetivo = ataque.objetivo();
 
-            if (vidasRestantes == 0) {
-                // Descarta su mano y comprueba si hay un ganador.
-                eliminarJugador(objetivo);
+        // Guardamos el jugador de turno antes de cualquier eliminación.
+        // Puede caer por una devolución o por la represalia de Bully.
+        String jugadorDeTurno = getJugadorDeTurno();
+
+        // Conservamos el equipo antes del daño.
+        // Si su dueño muere, eliminarJugador lo retirará y descartará,
+        // pero su represalia todavía puede ejecutarse si el juego continúa.
+        Carta equipoAlRecibirDanio = equipamiento.getEquipoDe(objetivo);
+
+        // Primero recibe daño el objetivo de la bola.
+        // Si muere, se procesa su eliminación y el resultado inmediatamente.
+        int danioAplicado = aplicarDanioDirecto(objetivo, 1);
+
+        if (danioAplicado > 0
+                && fase == Fase.EN_JUEGO
+                && equipoAlRecibirDanio != null) {
+
+            EfectoAlRecibirDanio efecto = efectosAlRecibirDanio.get(
+                    equipoAlRecibirDanio.tipo());
+
+            if (efecto != null) {
+                // No exigimos que el dueño siga vivo.
+                // Sí exigimos que el primer daño no haya terminado la partida.
+                efecto.aplicar(
+                        contextoEfectos,
+                        objetivo,
+                        ataque.atacante());
             }
         }
 
-        // Cerramos la espera y recuperamos el tiempo pausado,
-        // salvo que la partida haya terminado.
+        // La bola y su posible represalia ya quedaron resueltas.
+        // Solo se recupera el reloj si la partida continúa.
         cerrarAtaquePendiente();
 
         if (fase == Fase.EN_JUEGO
-                && objetivoTieneElTurno
-                && !sigueParticipando(objetivo)) {
-            // Si una devolución eliminó al jugador de turno,
-            // comenzamos el siguiente en lugar de esperar al eliminado.
+                && jugadorDeTurno != null
+                && !sigueParticipando(jugadorDeTurno)) {
+
+            // También cubre que Bully elimine al jugador de turno.
             avanzarTurno();
         }
     }

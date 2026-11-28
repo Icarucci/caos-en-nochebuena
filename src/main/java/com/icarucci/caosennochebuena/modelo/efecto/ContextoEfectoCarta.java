@@ -31,4 +31,8 @@ public interface ContextoEfectoCarta {
     // Incorpora cartas del mazo a la mano del jugador.
     // Devuelve la cantidad realmente robada si el mazo no alcanza.
     int robarCartas(String jugador, int cantidad);
+
+    // Aplica daño sin abrir una respuesta ni activar efectos de represalia.
+    // Devuelve la cantidad de daño realmente aplicada.
+    int causarDanioDirecto(String objetivo, int cantidad);
 }
