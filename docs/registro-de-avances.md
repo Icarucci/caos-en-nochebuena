@@ -320,3 +320,19 @@ están pendientes de implementar.
 - No se activa si se evita el daño ni por la represalia de Bully.
 - La actividad no revela el nombre de la carta robada.
 - Se verificó manualmente el funcionamiento.
+
+### Beneficio de Doble entrega — 28/11/2026
+
+- Si la primera Bola de nieve termina bloqueada, permite un segundo
+  lanzamiento desde la mano contra cualquier objetivo válido,
+  incluido el mismo del primer lanzamiento.
+- Se espera la resolución completa de las devoluciones.
+- El máximo es de dos lanzamientos por turno; cada uno consume su carta.
+- Un impacto, incluida la activación de Lo recalentado de anoche,
+  no habilita el lanzamiento adicional.
+- Las cancelaciones por abandono tampoco lo habilitan.
+- El equipo debe permanecer colocado y el contador se reinicia
+  al comenzar cada turno.
+- Se verificó manualmente el funcionamiento.
+- El mensaje de activación se registra desde EfectoDobleEntrega,
+  separado de la coordinación del turno en Partida.

@@ -29,6 +29,8 @@ import com.icarucci.caosennochebuena.modelo.efecto.EfectoAnteDanioLetal;
 import com.icarucci.caosennochebuena.modelo.efecto.EfectoLoRecalentadoDeAnoche;
 import com.icarucci.caosennochebuena.modelo.efecto.EfectoAlCausarDanio;
 import com.icarucci.caosennochebuena.modelo.efecto.EfectoPinzaDelAsador;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoAlFinalizarBola;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoDobleEntrega;
 
 
 public class Partida {
@@ -78,9 +80,13 @@ public class Partida {
     // Tiempo que conservamos del turno mientras se resuelve el ataque.
     private long tiempoDeTurnoPausado;
 
-    // Límite básico de una Bola de nieve por turno.
-    // Usar Devolver no consume este permiso.
-    private boolean bolaDeNieveUsada;
+    // Cuenta lanzamientos desde la mano durante el turno actual.
+    // Devolver no incrementa este contador.
+    private int bolasLanzadasEnTurno;
+
+    // Solo se habilita al resolverse la primera bola sin impacto.
+    private boolean segundaBolaHabilitada;
+
     // Cada partida tiene su propio mazo y descarte.
     private final Mazo mazo = new Mazo();
 
@@ -113,6 +119,9 @@ public class Partida {
     // Beneficios del atacante cuando su bola efectivamente causa daño.
     private final Map<TipoCarta, EfectoAlCausarDanio> efectosAlCausarDanio = Map.of(TipoCarta.PINZA_DEL_ASADOR,new EfectoPinzaDelAsador());
 
+    // Se consultan cuando termina toda la cadena de la bola.
+    private final Map<TipoCarta, EfectoAlFinalizarBola> efectosAlFinalizarBola = Map.of(TipoCarta.DOBLE_ENTREGA,new EfectoDobleEntrega());
+
     // Adaptador privado entre los efectos y el estado de esta partida.
     // No se entrega al navegador ni se expone mediante un getter.
     private final ContextoEfectoCarta contextoEfectos = new ContextoEfectoCarta() {
@@ -131,8 +140,8 @@ public class Partida {
 
                 @Override
                 public void cerrarAtaque() {
-                    // Recupera el tiempo restante del turno original.
-                    cerrarAtaquePendiente();
+                    // Esquivar cierra la cadena completa como bloqueada.
+                    cerrarAtaquePendiente(ResultadoBolaDeNieve.BLOQUEADA);
                 }
 
                 @Override
@@ -653,7 +662,9 @@ public class Partida {
 
     private void iniciarTurnoActual() {
         // El nuevo turno recupera el permiso para lanzar una bola.
-        bolaDeNieveUsada = false;
+        // Cada turno comienza con un lanzamiento normal disponible.
+        bolasLanzadasEnTurno = 0;
+        segundaBolaHabilitada = false;
 
         String identificador = ordenDeTurnos.get(posicionDeTurno);
         List<Carta> mano = manosPorJugador.get(identificador);
@@ -1034,13 +1045,36 @@ public class Partida {
                         < roles.get(jugador).getVidasIniciales();
     }
 
+    private boolean tienePermisoDeLanzamiento(String jugador) {
+        if (bolasLanzadasEnTurno == 0) {
+            return true;
+        }
+
+        // Nunca permitimos una tercera bola.
+        if (bolasLanzadasEnTurno != 1 || !segundaBolaHabilitada) {
+            return false;
+        }
+
+        // El beneficio exige que el equipo siga colocado.
+        Carta equipo = equipamiento.getEquipoDe(jugador);
+
+        EfectoAlFinalizarBola efecto = equipo == null
+                ? null
+                : efectosAlFinalizarBola.get(equipo.tipo());
+
+        return efecto != null
+                && efecto.permiteSegundaBola(
+                        ResultadoBolaDeNieve.BLOQUEADA,
+                        bolasLanzadasEnTurno);
+    }
+
     public synchronized boolean lanzarBolaDeNieve(String atacante, String identificadorCarta, String objetivo) {
 
         // Solo puede lanzar el jugador de turno, mientras no haya
         // otro ataque pendiente y conserve su permiso para lanzar.
         if (fase != Fase.EN_JUEGO
                 || combate.getAtaquePendiente() != null
-                || bolaDeNieveUsada
+                || !tienePermisoDeLanzamiento(atacante)
                 || !sigueParticipando(atacante)
                 || !atacante.equals(getJugadorDeTurno())) {
             return false;
@@ -1076,7 +1110,8 @@ public class Partida {
         pausarRelojDeTurno();
         mano.remove(bola);
         mazo.descartar(bola);
-        bolaDeNieveUsada = true;
+        // Solo incrementamos después de validar y consumir la carta.
+        bolasLanzadasEnTurno++;
 
         // Abrimos una espera nueva, con su propio identificador y plazo.
         // Las vidas todavía no cambian: primero puede haber una defensa.
@@ -1275,9 +1310,9 @@ public class Partida {
             }
         }
 
-        // La bola y su posible represalia ya quedaron resueltas.
-        // Solo se recupera el reloj si la partida continúa.
-        cerrarAtaquePendiente();
+        // Hubo un impacto, aunque Lo recalentado evitara el daño letal.
+        // Por eso no se habilita Doble entrega.
+        cerrarAtaquePendiente(ResultadoBolaDeNieve.IMPACTO);
 
         if (fase == Fase.EN_JUEGO
                 && jugadorDeTurno != null
@@ -1295,28 +1330,63 @@ public class Partida {
     }
 
     private void cerrarAtaquePendiente() {
-        // Combate finaliza la espera; Partida recupera el reloj del turno.
+        // Los cierres sin resultado explícito son cancelaciones,
+        // por ejemplo, cuando alguien abandona.
+        cerrarAtaquePendiente(ResultadoBolaDeNieve.CANCELADA);
+    }
+
+    private void cerrarAtaquePendiente(ResultadoBolaDeNieve resultadoBola) {
+        if (!combate.hayAtaquePendiente()) {
+            return;
+        }
+
         combate.cerrarAtaque();
 
-        // Solo reanudamos si la partida sigue en juego.
         if (fase == Fase.EN_JUEGO) {
-            vencimientoDelTurno = System.nanoTime() + tiempoDeTurnoPausado;
+            // Recuperamos únicamente el tiempo que quedaba del turno.
+            vencimientoDelTurno =
+                    System.nanoTime() + tiempoDeTurnoPausado;
+
+            String jugadorDeTurno = getJugadorDeTurno();
+
+            if (sigueParticipando(jugadorDeTurno)) {
+                Carta equipo =
+                        equipamiento.getEquipoDe(jugadorDeTurno);
+
+                EfectoAlFinalizarBola efecto = equipo == null
+                        ? null
+                        : efectosAlFinalizarBola.get(equipo.tipo());
+
+                if (efecto != null
+                        && efecto.permiteSegundaBola(
+                                resultadoBola,
+                                bolasLanzadasEnTurno)) {
+
+                    // Partida administra el permiso del turno.
+                    segundaBolaHabilitada = true;
+
+                    // El efecto ejecuta su activación y registra su mensaje.
+                    efecto.activar(contextoEfectos, jugadorDeTurno);
+                }
+            }
         }
 
         tiempoDeTurnoPausado = 0;
     }
 
     public synchronized boolean puedeLanzarBolaDeNieve(String identificador) {
-        // Este permiso sirve para dibujar los controles.
-        // Al recibir la acción, lanzarBolaDeNieve vuelve a validarla.
+        // Este permiso dibuja los controles.
+        // lanzarBolaDeNieve vuelve a validar la solicitud real.
         return fase == Fase.EN_JUEGO
-                && combate.getAtaquePendiente() == null
-                && !bolaDeNieveUsada
+                && !combate.hayAtaquePendiente()
                 && sigueParticipando(identificador)
                 && identificador.equals(getJugadorDeTurno())
+                && tienePermisoDeLanzamiento(identificador)
                 && System.nanoTime() - vencimientoDelTurno < 0
-                && manosPorJugador.getOrDefault(identificador, List.of()).stream()
-                        .anyMatch(carta -> carta.tipo() == TipoCarta.BOLA_DE_NIEVE);
+                && manosPorJugador.getOrDefault(
+                        identificador, List.of()).stream()
+                        .anyMatch(carta ->
+                                carta.tipo() == TipoCarta.BOLA_DE_NIEVE);
     }
 
 
