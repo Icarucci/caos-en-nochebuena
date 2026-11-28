@@ -42,4 +42,11 @@ public interface ContextoEfectoCarta {
     // Transfiere el equipo del objetivo a la mano del jugador.
     // No lo descarta ni lo equipa automáticamente.
     boolean robarEquipo(String jugador, String objetivo);
+
+    // Deja al jugador con una vida antes de aplicar un daño letal.
+    // No revive a jugadores que ya fueron eliminados.
+    boolean evitarEliminacionConUnaVida(String jugador);
+
+    // Descarta todas las cartas de la mano, sin retirar el equipo.
+    void descartarMano(String jugador);
 }

@@ -25,6 +25,8 @@ import com.icarucci.caosennochebuena.modelo.efecto.EfectoAlRecibirDanio;
 import com.icarucci.caosennochebuena.modelo.efecto.EfectoBullyNavideno;
 import com.icarucci.caosennochebuena.modelo.efecto.EfectoGrinch;
 import com.icarucci.caosennochebuena.modelo.efecto.EfectoEnTarlipes;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoAnteDanioLetal;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoLoRecalentadoDeAnoche;
 
 
 public class Partida {
@@ -102,6 +104,9 @@ public class Partida {
 
     // Los efectos automáticos se agrupan por el momento en que se activan.
     private final Map<TipoCarta, EfectoAlRecibirDanio> efectosAlRecibirDanio = Map.of(TipoCarta.BULLY_NAVIDENO,new EfectoBullyNavideno());
+
+    // Se consultan antes de eliminar y determinar el resultado.
+    private final Map<TipoCarta, EfectoAnteDanioLetal> efectosAnteDanioLetal = Map.of(TipoCarta.LO_RECALENTADO_DE_ANOCHE,new EfectoLoRecalentadoDeAnoche());
 
     // Adaptador privado entre los efectos y el estado de esta partida.
     // No se entrega al navegador ni se expone mediante un getter.
@@ -238,6 +243,40 @@ public class Partida {
                 @Override
                 public boolean robarEquipo(String jugador, String objetivo) {
                     return Partida.this.robarEquipo(jugador, objetivo);
+                }
+
+                @Override
+                public boolean evitarEliminacionConUnaVida(String jugador) {
+                    // Se solicita antes de descontar un daño letal.
+                    // No permite revivir eliminados ni abandonados.
+                    if (fase != Fase.EN_JUEGO
+                            || !sigueParticipando(jugador)) {
+                        return false;
+                    }
+
+                    vidasPorJugador.put(jugador, 1);
+                    return true;
+                }
+
+                @Override
+                public void descartarMano(String jugador) {
+                    // El jugador sigue participando:
+                    // la salvación evitó procesar su eliminación.
+                    if (fase != Fase.EN_JUEGO
+                            || !sigueParticipando(jugador)) {
+                        return;
+                    }
+
+                    int cantidad = manosPorJugador
+                            .getOrDefault(jugador, List.of()).size();
+
+                    Partida.this.descartarManoDe(jugador);
+
+                    registrarEvento(
+                            jugador,
+                            "descarta toda su mano: "
+                                    + cantidad + " carta(s).",
+                            null);
                 }
 
     };
@@ -1059,8 +1098,7 @@ public class Partida {
     }
 
     private int aplicarDanioDirecto(String objetivo, int cantidad) {
-        // Un resultado ya determinado no puede modificarse
-        // mediante daños posteriores.
+        // Un resultado ya determinado no puede modificarse.
         if (fase != Fase.EN_JUEGO
                 || cantidad <= 0
                 || !sigueParticipando(objetivo)) {
@@ -1069,8 +1107,26 @@ public class Partida {
 
         int vidasActuales = vidasPorJugador.get(objetivo);
         int danioAplicado = Math.min(cantidad, vidasActuales);
-        int vidasRestantes = vidasActuales - danioAplicado;
 
+        // Detectamos el daño letal antes de descontar las vidas.
+        if (danioAplicado == vidasActuales) {
+            Carta equipo = equipamiento.getEquipoDe(objetivo);
+
+            EfectoAnteDanioLetal efecto = equipo == null
+                    ? null
+                    : efectosAnteDanioLetal.get(equipo.tipo());
+
+            if (efecto != null
+                    && efecto.aplicar(contextoEfectos, objetivo)) {
+
+                // El efecto evitó aplicar el daño letal.
+                // No eliminamos ni evaluamos una derrota de este jugador.
+                return 0;
+            }
+        }
+
+        // Sin salvación, aplicamos el daño normalmente.
+        int vidasRestantes = vidasActuales - danioAplicado;
         vidasPorJugador.put(objetivo, vidasRestantes);
 
         registrarEvento(
@@ -1081,13 +1137,10 @@ public class Partida {
                 null);
 
         if (vidasRestantes == 0) {
-            // Eliminar descarta mano y equipo, revela el rol
-            // y comprueba inmediatamente si terminó la partida.
             eliminarJugador(objetivo);
         }
 
-        // No abrimos defensas ni ejecutamos efectos al recibir daño.
-        // La resolución de la bola decidirá cuándo activar esos efectos.
+        // El daño directo no abre defensas ni activa represalias.
         return danioAplicado;
     }
 

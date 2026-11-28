@@ -55,4 +55,29 @@ class MazoRecicladoTest {
         assertEquals(1, mazo.getCantidadDescarte());
         assertEquals(ultima, mazo.getUltimaDescartada().orElseThrow());
     }
+
+    @Test
+    void reciclaEnCuantoSeRobaLaUltimaCartaDelMazo() {
+        Mazo mazo = new Mazo();
+
+        // Dejamos exactamente una carta en el mazo principal.
+        List<Carta> retiradas =
+                mazo.robar(mazo.getCantidadCartas() - 1);
+
+        mazo.descartar(retiradas.get(0));
+        mazo.descartar(retiradas.get(1));
+
+        Carta ultimaDescartada = retiradas.get(2);
+        mazo.descartar(ultimaDescartada);
+
+        // Robar la última debe provocar el reciclado inmediatamente,
+        // sin necesitar otra llamada a robar.
+        assertTrue(mazo.robar().isPresent());
+
+        assertEquals(2, mazo.getCantidadCartas());
+        assertEquals(1, mazo.getCantidadDescarte());
+        assertEquals(
+                ultimaDescartada,
+                mazo.getUltimaDescartada().orElseThrow());
+    }
 }

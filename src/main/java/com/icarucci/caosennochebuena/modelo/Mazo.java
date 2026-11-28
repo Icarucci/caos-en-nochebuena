@@ -33,15 +33,21 @@ public class Mazo {
     }
 
     public Optional<Carta> robar() {
-        // Si se agotó el mazo, reciclamos el descarte
-        // conservando su última carta.
+        // También cubre un mazo que ya estaba vacío antes de este robo.
         if (cartas.isEmpty()) {
             reciclarDescarte();
         }
 
-        // Puede no haber cartas disponibles, aunque quede una visible
-        // en el descarte. En ese caso devolvemos Optional.empty().
-        return Optional.ofNullable(cartas.pollFirst());
+        Carta robada = cartas.pollFirst();
+
+        // Al retirar la última carta, intentamos formar inmediatamente
+        // el siguiente mazo, conservando la carta superior del descarte.
+        if (robada != null && cartas.isEmpty()) {
+            reciclarDescarte();
+        }
+
+        // Si no había cartas reciclables, el robo puede quedar sin carta.
+        return Optional.ofNullable(robada);
     }
 
     public List<Carta> robar(int cantidad) {

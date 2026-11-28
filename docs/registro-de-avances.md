@@ -293,3 +293,16 @@ están pendientes de implementar.
 - Los ejemplares reciclados conservan sus identificadores.
 - Se agregaron dos pruebas automáticas para estas condiciones.
 - La suite completó tres pruebas sin fallos ni errores.
+
+### Lo recalentado de anoche y reciclado inmediato — 28/11/2026
+
+- Se implementó un efecto automático que evita el daño letal antes
+  de procesar la eliminación y deja al jugador con una vida.
+- Se descarta primero el equipo y después toda la mano.
+- Finalmente se intenta robar una carta del mazo.
+- No se activa por abandono ni eliminación por inactividad.
+- Se verificó la salvación ante Bola de nieve y represalia de Bully,
+  y la eliminación normal ante un daño letal posterior sin el equipo.
+- Al robar la última carta del mazo, se intenta reciclar inmediatamente
+  el descarte, conservando su carta superior.
+- Se agregó una prueba automática del reciclado inmediato.
