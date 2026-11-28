@@ -27,4 +27,8 @@ public interface ContextoEfectoCarta {
     // Recupera vidas sin superar el máximo del rol.
     // Devuelve cuántas vidas se recuperaron realmente.
     int recuperarVidas(String jugador, int cantidad);
+
+    // Incorpora cartas del mazo a la mano del jugador.
+    // Devuelve la cantidad realmente robada si el mazo no alcanza.
+    int robarCartas(String jugador, int cantidad);
 }

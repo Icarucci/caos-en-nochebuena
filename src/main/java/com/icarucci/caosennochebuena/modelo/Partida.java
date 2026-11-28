@@ -19,6 +19,8 @@ import com.icarucci.caosennochebuena.modelo.efecto.EfectoBolaDeNieve;
 import com.icarucci.caosennochebuena.modelo.efecto.EfectoEsquivar;
 import com.icarucci.caosennochebuena.modelo.efecto.EfectoDevolver;
 import com.icarucci.caosennochebuena.modelo.efecto.EfectoCuracion;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoInicioTurno;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoArbolNavideno;
 
 
 public class Partida {
@@ -89,6 +91,13 @@ public class Partida {
     // Los efectos no guardan información particular de un jugador.
     // Construimos una sola vez la asociación entre cartas y efectos.
     private final Map<TipoCarta, EfectoCarta> efectosPorTipo = crearEfectosDeCartas();
+
+    // Los beneficios de inicio de turno tienen su propio registro.
+    // Equipar una carta no ejecuta automáticamente estos efectos.
+    private final Map<TipoCarta, EfectoInicioTurno> efectosDeInicioTurno =
+            Map.of(
+                    TipoCarta.ARBOL_NAVIDENO,
+                    new EfectoArbolNavideno());
 
     // Adaptador privado entre los efectos y el estado de esta partida.
     // No se entrega al navegador ni se expone mediante un getter.
@@ -166,6 +175,39 @@ public class Partida {
                     }
 
                     return recuperadas;
+                }
+
+                                @Override
+                public int robarCartas(String jugador, int cantidad) {
+                    // Los efectos no pueden entregar cartas a alguien
+                    // eliminado o que haya abandonado.
+                    if (fase != Fase.EN_JUEGO
+                            || cantidad <= 0
+                            || !sigueParticipando(jugador)) {
+                        return 0;
+                    }
+
+                    List<Carta> mano = manosPorJugador.get(jugador);
+
+                    if (mano == null) {
+                        return 0;
+                    }
+
+                    // Mazo administra también el reciclado del descarte.
+                    // Puede devolver menos cartas si no quedan suficientes.
+                    List<Carta> robadas = mazo.robar(cantidad);
+                    mano.addAll(robadas);
+
+                    // La cantidad es pública; los tipos y los identificadores
+                    // de las cartas robadas siguen siendo privados.
+                    if (!robadas.isEmpty()) {
+                        registrarEvento(
+                                jugador,
+                                "roba " + robadas.size() + " carta(s).",
+                                null);
+                    }
+
+                    return robadas.size();
                 }
     };
 
@@ -525,16 +567,34 @@ public class Partida {
     private void iniciarTurnoActual() {
         // El nuevo turno recupera el permiso para lanzar una bola.
         bolaDeNieveUsada = false;
+
         String identificador = ordenDeTurnos.get(posicionDeTurno);
         List<Carta> mano = manosPorJugador.get(identificador);
 
-        // El robo ocurre una sola vez al comenzar el turno.
-        // Reconectarse o consultar el estado no vuelve a entregar cartas.
+        // Robo normal: dos cartas al comenzar el turno.
         mano.addAll(mazo.robar(2));
 
-        // El minuto empieza después del robo.
+        registrarEvento(
+                identificador,
+                "comienza el turno " + numeroDeTurno + "/24.",
+                null);
+
+        // Solo consultamos el equipo que ya estaba colocado.
+        Carta equipo = equipamiento.getEquipoDe(identificador);
+
+        if (equipo != null) {
+            EfectoInicioTurno efecto =
+                    efectosDeInicioTurno.get(equipo.tipo());
+
+            // Los equipos sin un beneficio de inicio de turno
+            // no ejecutan ninguna acción en este momento.
+            if (efecto != null) {
+                efecto.aplicar(contextoEfectos, identificador);
+            }
+        }
+
+        // El minuto empieza después del robo normal y sus adicionales.
         iniciarRelojDeTurno();
-        registrarEvento(identificador,"comienza el turno " + numeroDeTurno + "/24.",null);
     }
 
     private boolean sigueParticipando(String identificador) {

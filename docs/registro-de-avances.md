@@ -247,3 +247,15 @@ están pendientes de implementar.
 - Se verificaron manualmente estos comportamientos.
 - Los beneficios particulares y las cartas que quitan o roban equipos
   siguen pendientes.
+
+  ### Beneficio de Árbol navideño — 27/11/2026
+
+- Se creó EfectoInicioTurno para comportamientos ejecutados al comenzar
+  un turno y EfectoArbolNavideno como primera implementación.
+- Árbol navideño permite robar una carta adicional mientras esté equipado.
+- Equiparlo o reconectarse no provoca robos adicionales.
+- Reemplazarlo elimina su beneficio para los siguientes turnos.
+- El límite al finalizar el turno continúa siendo de cuatro cartas.
+- Se incorporó al contexto una operación reutilizable de robo de cartas.
+- Las pruebas Maven finalizaron correctamente y se verificó manualmente
+  el funcionamiento del equipo.
