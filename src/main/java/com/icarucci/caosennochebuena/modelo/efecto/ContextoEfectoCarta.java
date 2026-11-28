@@ -49,4 +49,8 @@ public interface ContextoEfectoCarta {
 
     // Descarta todas las cartas de la mano, sin retirar el equipo.
     void descartarMano(String jugador);
+
+    // Transfiere a la mano del jugador una comida aleatoria del objetivo.
+    // Devuelve false si no existe ninguna disponible.
+    boolean robarRecuperacionAlAzar(String jugador, String objetivo);
 }

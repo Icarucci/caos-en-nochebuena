@@ -27,6 +27,8 @@ import com.icarucci.caosennochebuena.modelo.efecto.EfectoGrinch;
 import com.icarucci.caosennochebuena.modelo.efecto.EfectoEnTarlipes;
 import com.icarucci.caosennochebuena.modelo.efecto.EfectoAnteDanioLetal;
 import com.icarucci.caosennochebuena.modelo.efecto.EfectoLoRecalentadoDeAnoche;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoAlCausarDanio;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoPinzaDelAsador;
 
 
 public class Partida {
@@ -107,6 +109,9 @@ public class Partida {
 
     // Se consultan antes de eliminar y determinar el resultado.
     private final Map<TipoCarta, EfectoAnteDanioLetal> efectosAnteDanioLetal = Map.of(TipoCarta.LO_RECALENTADO_DE_ANOCHE,new EfectoLoRecalentadoDeAnoche());
+
+    // Beneficios del atacante cuando su bola efectivamente causa daño.
+    private final Map<TipoCarta, EfectoAlCausarDanio> efectosAlCausarDanio = Map.of(TipoCarta.PINZA_DEL_ASADOR,new EfectoPinzaDelAsador());
 
     // Adaptador privado entre los efectos y el estado de esta partida.
     // No se entrega al navegador ni se expone mediante un getter.
@@ -277,6 +282,14 @@ public class Partida {
                             "descarta toda su mano: "
                                     + cantidad + " carta(s).",
                             null);
+                }
+
+                @Override
+                public boolean robarRecuperacionAlAzar(
+                        String jugador, String objetivo) {
+
+                    return Partida.this.robarRecuperacionAlAzar(
+                            jugador, objetivo);
                 }
 
     };
@@ -755,6 +768,59 @@ public class Partida {
                 .orElse(null);
     }
 
+    private boolean robarRecuperacionAlAzar(
+            String jugador, String objetivo) {
+
+        if (fase != Fase.EN_JUEGO
+                || !sigueParticipando(jugador)
+                || objetivo == null
+                || jugador.equals(objetivo)
+                || !roles.containsKey(objetivo)
+                || jugadoresQueAbandonaron.contains(objetivo)
+                || jugadoresEliminados.contains(objetivo)) {
+            return false;
+        }
+
+        // El objetivo puede haber llegado a cero vidas con esta bola,
+        // pero todavía no debe haberse procesado su eliminación.
+        List<Carta> manoObjetivo = manosPorJugador.get(objetivo);
+        List<Carta> manoDestino = manosPorJugador.get(jugador);
+
+        if (manoObjetivo == null || manoDestino == null) {
+            return false;
+        }
+
+        // Todas las comidas actuales recuperan vidas, incluidas las grupales.
+        List<Carta> candidatas = new ArrayList<>(
+                manoObjetivo.stream()
+                        .filter(carta ->
+                                carta.tipo().getCategoria()
+                                        == CategoriaCarta.COMIDA)
+                        .toList());
+
+        if (candidatas.isEmpty()) {
+            return false;
+        }
+
+        // Sorteamos entre los ejemplares disponibles sin cambiar
+        // el orden de las demás cartas de la mano del objetivo.
+        Collections.shuffle(candidatas);
+        Carta robada = candidatas.get(0);
+
+        // Transferimos el mismo ejemplar: no pasa por el descarte
+        // y no se ejecuta su efecto de curación.
+        manoObjetivo.remove(robada);
+        manoDestino.add(robada);
+
+        // Publicamos la acción, pero no revelamos qué carta privada se robó.
+        registrarEvento(
+                jugador,
+                "roba una carta de recuperación de vida de",
+                objetivo);
+
+        return true;
+    }
+
     private boolean robarEquipo(String jugador, String objetivo) {
         // Validamos los participantes antes de retirar una carta.
         if (fase != Fase.EN_JUEGO
@@ -1098,7 +1164,16 @@ public class Partida {
     }
 
     private int aplicarDanioDirecto(String objetivo, int cantidad) {
-        // Un resultado ya determinado no puede modificarse.
+        // La represalia de Bully no activa beneficios de una Bola de nieve.
+        // Sí permite salvarse mediante Lo recalentado de anoche.
+        return aplicarDanio(objetivo, cantidad, null);
+    }
+
+    private int aplicarDanio(
+            String objetivo,
+            int cantidad,
+            String atacanteDeBola) {
+
         if (fase != Fase.EN_JUEGO
                 || cantidad <= 0
                 || !sigueParticipando(objetivo)) {
@@ -1108,7 +1183,7 @@ public class Partida {
         int vidasActuales = vidasPorJugador.get(objetivo);
         int danioAplicado = Math.min(cantidad, vidasActuales);
 
-        // Detectamos el daño letal antes de descontar las vidas.
+        // Primero comprobamos si un equipo evita el daño letal.
         if (danioAplicado == vidasActuales) {
             Carta equipo = equipamiento.getEquipoDe(objetivo);
 
@@ -1119,13 +1194,11 @@ public class Partida {
             if (efecto != null
                     && efecto.aplicar(contextoEfectos, objetivo)) {
 
-                // El efecto evitó aplicar el daño letal.
-                // No eliminamos ni evaluamos una derrota de este jugador.
+                // Sin daño aplicado no se activa la Pinza.
                 return 0;
             }
         }
 
-        // Sin salvación, aplicamos el daño normalmente.
         int vidasRestantes = vidasActuales - danioAplicado;
         vidasPorJugador.put(objetivo, vidasRestantes);
 
@@ -1136,11 +1209,30 @@ public class Partida {
                         + vidasRestantes + " vidas.",
                 null);
 
+        // Solo las bolas activan estos beneficios.
+        // El objetivo todavía conserva su mano, incluso con cero vidas.
+        if (atacanteDeBola != null
+                && sigueParticipando(atacanteDeBola)) {
+
+            Carta equipoAtacante =
+                    equipamiento.getEquipoDe(atacanteDeBola);
+
+            EfectoAlCausarDanio efecto = equipoAtacante == null
+                    ? null
+                    : efectosAlCausarDanio.get(equipoAtacante.tipo());
+
+            if (efecto != null) {
+                efecto.aplicar(
+                        contextoEfectos, atacanteDeBola, objetivo);
+            }
+        }
+
+        // Después del posible robo se descarta el resto de la mano
+        // y se comprueba el resultado de la eliminación.
         if (vidasRestantes == 0) {
             eliminarJugador(objetivo);
         }
 
-        // El daño directo no abre defensas ni activa represalias.
         return danioAplicado;
     }
 
@@ -1162,9 +1254,9 @@ public class Partida {
         // pero su represalia todavía puede ejecutarse si el juego continúa.
         Carta equipoAlRecibirDanio = equipamiento.getEquipoDe(objetivo);
 
-        // Primero recibe daño el objetivo de la bola.
-        // Si muere, se procesa su eliminación y el resultado inmediatamente.
-        int danioAplicado = aplicarDanioDirecto(objetivo, 1);
+        // Identificamos al atacante de la bola para ejecutar sus beneficios
+        // antes de procesar una posible eliminación del objetivo.
+        int danioAplicado = aplicarDanio(objetivo, 1, ataque.atacante());
 
         if (danioAplicado > 0
                 && fase == Fase.EN_JUEGO

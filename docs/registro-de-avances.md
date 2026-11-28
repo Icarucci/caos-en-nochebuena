@@ -306,3 +306,17 @@ están pendientes de implementar.
 - Al robar la última carta del mazo, se intenta reciclar inmediatamente
   el descarte, conservando su carta superior.
 - Se agregó una prueba automática del reciclado inmediato.
+
+### Beneficio de Pinza del asador — 28/11/2026
+
+- Se activa automáticamente cuando una Bola de nieve del portador
+  causa daño a otro jugador.
+- Transfiere a su mano una comida aleatoria del objetivo, incluidas
+  las comidas grupales, sin utilizarla ni descartarla.
+- Si el objetivo no tiene comidas, no se transfiere ninguna carta.
+- La Pinza permanece equipada.
+- Ante un golpe letal, el robo ocurre antes de descartar la mano
+  del jugador eliminado.
+- No se activa si se evita el daño ni por la represalia de Bully.
+- La actividad no revela el nombre de la carta robada.
+- Se verificó manualmente el funcionamiento.
