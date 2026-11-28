@@ -273,3 +273,14 @@ están pendientes de implementar.
 - Si el primer daño termina la partida, no se aplica la represalia.
 - Si cae el jugador de turno y la partida continúa, se avanza al siguiente.
 - Se verificó manualmente el funcionamiento.
+
+### Grinch y En tarlipes — 28/11/2026
+
+- Grinch retira el equipo del objetivo y lo incorpora a la mano
+  de quien juega la carta, sin equiparlo automáticamente.
+- En tarlipes retira el equipo del objetivo y lo envía al descarte.
+- Ambas cartas se descartan después de utilizarlas.
+- El servidor valida turno, plazo, propiedad de la carta y objetivo.
+- Solo pueden utilizarse contra otro participante activo con equipo,
+  durante el turno propio y sin un ataque pendiente.
+- Se verificó manualmente el funcionamiento de ambas cartas.

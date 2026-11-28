@@ -23,6 +23,8 @@ import com.icarucci.caosennochebuena.modelo.efecto.EfectoInicioTurno;
 import com.icarucci.caosennochebuena.modelo.efecto.EfectoArbolNavideno;
 import com.icarucci.caosennochebuena.modelo.efecto.EfectoAlRecibirDanio;
 import com.icarucci.caosennochebuena.modelo.efecto.EfectoBullyNavideno;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoGrinch;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoEnTarlipes;
 
 
 public class Partida {
@@ -219,6 +221,25 @@ public class Partida {
                     return Partida.this.aplicarDanioDirecto(
                             objetivo, cantidad);
                 }
+
+                @Override
+                public boolean desequipar(String objetivo) {
+                    // Esta entrada es para efectos jugados durante la partida.
+                    // La limpieza por eliminación utiliza directamente
+                    // la operación interna de Partida.
+                    if (fase != Fase.EN_JUEGO
+                            || !sigueParticipando(objetivo)) {
+                        return false;
+                    }
+
+                    return Partida.this.desequipar(objetivo);
+                }
+
+                @Override
+                public boolean robarEquipo(String jugador, String objetivo) {
+                    return Partida.this.robarEquipo(jugador, objetivo);
+                }
+
     };
 
 
@@ -230,6 +251,10 @@ public class Partida {
         efectos.put(TipoCarta.BOLA_DE_NIEVE, new EfectoBolaDeNieve());
         efectos.put(TipoCarta.ESQUIVAR, new EfectoEsquivar());
         efectos.put(TipoCarta.DEVOLVER, new EfectoDevolver());
+
+        // Comparten la categoría, pero sus efectos tienen destinos distintos.
+        efectos.put(TipoCarta.GRINCH, new EfectoGrinch());
+        efectos.put(TipoCarta.EN_TARLIPES, new EfectoEnTarlipes());
 
         // Todas las comidas actuales recuperan una vida.
         // Compartimos la implementación y configuramos su alcance y nombre.
@@ -691,6 +716,41 @@ public class Partida {
                 .orElse(null);
     }
 
+    private boolean robarEquipo(String jugador, String objetivo) {
+        // Validamos los participantes antes de retirar una carta.
+        if (fase != Fase.EN_JUEGO
+                || !sigueParticipando(jugador)
+                || !sigueParticipando(objetivo)
+                || jugador.equals(objetivo)) {
+            return false;
+        }
+
+        List<Carta> manoDestino = manosPorJugador.get(jugador);
+
+        if (manoDestino == null) {
+            return false;
+        }
+
+        // Reutilizamos la retirada, pero no la acción desequipar:
+        // el destino de esta carta será una mano, no el descarte.
+        Carta equipoRobado = equipamiento.retirarEquipoDe(objetivo);
+
+        if (equipoRobado == null) {
+            return false;
+        }
+
+        // Conservamos el mismo ejemplar y su identificador.
+        // El equipo que ya tenga el ladrón permanece colocado.
+        manoDestino.add(equipoRobado);
+
+        registrarEvento(
+                jugador,
+                "roba el equipo " + equipoRobado.tipo().getNombre() + " de",
+                objetivo);
+
+        return true;
+    }
+
     private boolean desequipar(String jugador) {
         // Retirar y descartar son pasos distintos.
         // Un futuro robo reutilizará retirarEquipoDe sin descartar la carta.
@@ -709,6 +769,84 @@ public class Partida {
                 null);
 
         return true;
+    }
+
+    public synchronized boolean puedeUsarCartaContraEquipo(
+            String jugador,
+            String identificadorCarta,
+            String objetivo) {
+
+        // Permite informar al frontend qué combinaciones puede habilitar.
+        return buscarCartaContraEquipoUtilizable(
+                jugador, identificadorCarta, objetivo) != null;
+    }
+
+    public synchronized boolean usarCartaContraEquipo(
+            String jugador,
+            String identificadorCarta,
+            String objetivo) {
+
+        // Volvemos a validar la solicitud real, aunque el navegador
+        // haya mostrado la acción como disponible.
+        Carta carta = buscarCartaContraEquipoUtilizable(
+                jugador, identificadorCarta, objetivo);
+
+        if (carta == null) {
+            return false;
+        }
+
+        EfectoCarta efecto = efectosPorTipo.get(carta.tipo());
+
+        // No consumimos una carta cuyo efecto no esté implementado.
+        if (efecto == null) {
+            return false;
+        }
+
+        // Todas las condiciones pasaron antes de modificar el estado.
+        // Grinch o En tarlipes se descarta; el destino del equipo
+        // lo determina su clase de efecto.
+        manosPorJugador.get(jugador).remove(carta);
+        mazo.descartar(carta);
+
+        efecto.aplicar(contextoEfectos, jugador, objetivo);
+
+        // Esta acción no consume el permiso de lanzar una Bola de nieve.
+        return true;
+    }
+
+    private Carta buscarCartaContraEquipoUtilizable(
+            String jugador,
+            String identificadorCarta,
+            String objetivo) {
+
+        // Solo durante el turno propio, antes del vencimiento
+        // y sin un ataque esperando respuesta.
+        if (fase != Fase.EN_JUEGO
+                || combate.hayAtaquePendiente()
+                || !sigueParticipando(jugador)
+                || !jugador.equals(getJugadorDeTurno())
+                || identificadorCarta == null
+                || System.nanoTime() - vencimientoDelTurno >= 0) {
+            return null;
+        }
+
+        // El objetivo debe ser otro participante activo.
+        // Estar reconectando no impide que sus equipos sean afectados.
+        if (!sigueParticipando(objetivo)
+                || jugador.equals(objetivo)
+                || equipamiento.getEquipoDe(objetivo) == null) {
+            return null;
+        }
+
+        // Comprobamos el ejemplar exacto en la mano del jugador.
+        // Por ahora estas son las dos cartas implementadas para esta acción.
+        return manosPorJugador.getOrDefault(jugador, List.of()).stream()
+                .filter(carta ->
+                        carta.identificador().equals(identificadorCarta)
+                        && (carta.tipo() == TipoCarta.GRINCH
+                            || carta.tipo() == TipoCarta.EN_TARLIPES))
+                .findFirst()
+                .orElse(null);
     }
 
     public synchronized boolean puedeUsarComida(

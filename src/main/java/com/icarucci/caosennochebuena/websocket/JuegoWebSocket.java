@@ -294,6 +294,43 @@ public class JuegoWebSocket extends TextWebSocketHandler {
             Partida partida = registroSalas.partidaDe(codigoSala);
             String identificador = buscarIdentificador(origen);
 
+            if (texto.startsWith("usar-carta-contra-equipo:")) {
+                // Recibimos dos líneas: carta propia y nombre del objetivo.
+                String[] datos = texto
+                        .substring("usar-carta-contra-equipo:".length())
+                        .split("\n", -1);
+
+                if (datos.length != 2) {
+                    enviarEstadoPreparacion(identificador, jugador);
+                    return;
+                }
+
+                // Resolvemos el objetivo únicamente dentro de esta sala.
+                // No compartimos sus identificadores de reconexión.
+                String objetivo = jugadores.entrySet().stream()
+                        .filter(entrada ->
+                                codigoSala.equals(
+                                        entrada.getValue().codigoSala())
+                                && datos[1].equals(
+                                        entrada.getValue().nombre()))
+                        .map(Map.Entry::getKey)
+                        .findFirst()
+                        .orElse(null);
+
+                // Partida valida turno, carta, participantes y equipo activo.
+                if (objetivo != null
+                        && partida.usarCartaContraEquipo(
+                                identificador, datos[0], objetivo)) {
+
+                    avisarPreparacionSala(codigoSala);
+                } else {
+                    // No consumimos la carta si la solicitud es rechazada.
+                    enviarEstadoPreparacion(identificador, jugador);
+                }
+
+                return;
+            }
+
             if (texto.startsWith("equipar-carta:")) {
                 String identificadorCarta =
                         texto.substring("equipar-carta:".length());
@@ -571,6 +608,36 @@ public class JuegoWebSocket extends TextWebSocketHandler {
         // Enviamos la lista completa, incluso vacía, para que la interfaz
         // también pueda quitar los equipos que dejaron de estar activos.
         enviar(jugador, "equipos:" + String.join("\n", equiposPublicos));
+
+        // Cada combinación ocupa dos líneas:
+        // identificador de una carta propia y nombre del objetivo permitido.
+        List<String> accionesDisponibles = new ArrayList<>();
+
+        for (var carta : partida.getManoDe(identificador)) {
+            for (var entrada : jugadores.entrySet()) {
+                Jugador posibleObjetivo = entrada.getValue();
+
+                if (!jugador.codigoSala().equals(
+                        posibleObjetivo.codigoSala())) {
+                    continue;
+                }
+
+                if (partida.puedeUsarCartaContraEquipo(
+                        identificador,
+                        carta.identificador(),
+                        entrada.getKey())) {
+
+                    accionesDisponibles.add(carta.identificador());
+                    accionesDisponibles.add(posibleObjetivo.nombre());
+                }
+            }
+        }
+
+        // La lista vacía también se envía para retirar permisos anteriores.
+        enviar(
+                jugador,
+                "acciones-equipo-disponibles:"
+                        + String.join("\n", accionesDisponibles));
     }
 
     private void enviarEstadoCombate(String identificador, Jugador jugador) {

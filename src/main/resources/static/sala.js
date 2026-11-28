@@ -42,6 +42,8 @@ let comidasDisponibles = new Set();
 let equiposDisponibles = new Set();
 // Información pública: nombre del jugador y nombre de su equipo activo.
 let equiposPorNombre = new Map();
+// Relaciona cada carta propia con los objetivos permitidos por Java.
+let accionesEquipoDisponibles = new Map();
 let vidasPorNombre = new Map();
 let ataqueActual = null;
 let permisoParaAtacar = false;
@@ -457,6 +459,7 @@ function conectar(sesion, accion) {
         texto === "" ? [] : texto.split("\n")
       );
 
+      accionesEquipoDisponibles.clear();
       actualizarVistaEquipamiento();
       return;
     }
@@ -482,6 +485,30 @@ function conectar(sesion, accion) {
       return;
     }
 
+    if (mensaje.startsWith("acciones-equipo-disponibles:")) {
+      const texto = mensaje.slice(
+        "acciones-equipo-disponibles:".length
+      );
+      const campos = texto === "" ? [] : texto.split("\n");
+
+      accionesEquipoDisponibles = new Map();
+
+      // Cada grupo contiene una carta propia y un objetivo permitido.
+      for (let indice = 0; indice + 1 < campos.length; indice += 2) {
+        const carta = campos[indice];
+        const objetivo = campos[indice + 1];
+
+        if (!accionesEquipoDisponibles.has(carta)) {
+          accionesEquipoDisponibles.set(carta, []);
+        }
+
+        accionesEquipoDisponibles.get(carta).push(objetivo);
+      }
+
+      actualizarControlesContraEquipo();
+      return;
+    }
+
     if (mensaje.startsWith("mano:")) {
       const texto = mensaje.slice("mano:".length);
       const datos = texto === "" ? [] : texto.split("\n");
@@ -503,6 +530,47 @@ function conectar(sesion, accion) {
         // implementemos jugar y descartar cartas.
         elemento.dataset.identificador = identificador;
         elemento.dataset.tipo = tipo;
+
+        if (tipo === "GRINCH" || tipo === "EN_TARLIPES") {
+          const selector = document.createElement("select");
+          selector.dataset.objetivoEquipo = identificador;
+          selector.setAttribute(
+            "aria-label",
+            `Objetivo para ${nombre}`
+          );
+          selector.disabled = true;
+
+          const boton = document.createElement("button");
+          boton.type = "button";
+          boton.dataset.cartaContraEquipo = identificador;
+          boton.textContent = tipo === "GRINCH"
+            ? "Robar equipo"
+            : "Desequipar";
+          boton.disabled = true;
+
+          selector.addEventListener(
+            "change",
+            actualizarControlesContraEquipo
+          );
+
+          boton.addEventListener("click", () => {
+            if (boton.disabled || partidaFinalizada) {
+              return;
+            }
+
+            const objetivo = selector.value;
+
+            if (objetivo && enviar(
+              `usar-carta-contra-equipo:${identificador}\n${objetivo}`
+            )) {
+              // Esperamos la actualización del servidor.
+              boton.disabled = true;
+              selector.disabled = true;
+            }
+          });
+
+          elemento.append(" ", selector, " ", boton);
+        }
 
         if (categoria === "EQUIPO") {
           const botonEquipar = document.createElement("button");
@@ -886,9 +954,56 @@ function actualizarVistaEquipamiento() {
     `Tu equipo: ${equipo ?? "ninguno"}.`;
 
   document.querySelectorAll("button[data-equipar]").forEach((boton) => {
-    // Es un permiso de presentación; el servidor valida cada solicitud.
+    // Estos permisos solo controlan la presentación.
+    // Java vuelve a comprobar cada solicitud.
     boton.disabled = partidaFinalizada
       || !equiposDisponibles.has(boton.dataset.equipar);
+  });
+
+  // También actualiza los controles recién creados en la mano
+  // y los deshabilita al finalizar la partida.
+  actualizarControlesContraEquipo();
+}
+
+function actualizarControlesContraEquipo() {
+  document.querySelectorAll(
+    "select[data-objetivo-equipo]"
+  ).forEach((selector) => {
+    const carta = selector.dataset.objetivoEquipo;
+    const objetivos = accionesEquipoDisponibles.get(carta) ?? [];
+
+    const actuales = [...selector.options]
+      .map((opcion) => opcion.value);
+
+    // No reconstruimos el selector en cada actualización del reloj.
+    // Conservamos la elección mientras siga siendo válida.
+    if (JSON.stringify(actuales) !== JSON.stringify(objetivos)) {
+      const seleccionAnterior = selector.value;
+
+      const opciones = objetivos.map((nombre) => {
+        const opcion = document.createElement("option");
+        opcion.value = nombre;
+        opcion.textContent = nombre;
+        return opcion;
+      });
+
+      selector.replaceChildren(...opciones);
+
+      if (objetivos.includes(seleccionAnterior)) {
+        selector.value = seleccionAnterior;
+      }
+    }
+
+    selector.disabled = partidaFinalizada || objetivos.length === 0;
+
+    const boton = selector.closest("li").querySelector(
+      "button[data-carta-contra-equipo]"
+    );
+
+    if (boton) {
+      boton.disabled = selector.disabled
+        || !objetivos.includes(selector.value);
+    }
   });
 }
 

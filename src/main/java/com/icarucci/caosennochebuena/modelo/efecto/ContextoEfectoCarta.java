@@ -35,4 +35,11 @@ public interface ContextoEfectoCarta {
     // Aplica daño sin abrir una respuesta ni activar efectos de represalia.
     // Devuelve la cantidad de daño realmente aplicada.
     int causarDanioDirecto(String objetivo, int cantidad);
+
+    // Retira el equipo del objetivo y lo envía al descarte.
+    boolean desequipar(String objetivo);
+
+    // Transfiere el equipo del objetivo a la mano del jugador.
+    // No lo descarta ni lo equipa automáticamente.
+    boolean robarEquipo(String jugador, String objetivo);
 }
