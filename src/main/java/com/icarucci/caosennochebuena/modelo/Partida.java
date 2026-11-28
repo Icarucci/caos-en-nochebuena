@@ -19,6 +19,18 @@ import com.icarucci.caosennochebuena.modelo.efecto.EfectoBolaDeNieve;
 import com.icarucci.caosennochebuena.modelo.efecto.EfectoEsquivar;
 import com.icarucci.caosennochebuena.modelo.efecto.EfectoDevolver;
 import com.icarucci.caosennochebuena.modelo.efecto.EfectoCuracion;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoInicioTurno;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoArbolNavideno;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoAlRecibirDanio;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoBullyNavideno;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoGrinch;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoEnTarlipes;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoAnteDanioLetal;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoLoRecalentadoDeAnoche;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoAlCausarDanio;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoPinzaDelAsador;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoAlFinalizarBola;
+import com.icarucci.caosennochebuena.modelo.efecto.EfectoDobleEntrega;
 
 
 public class Partida {
@@ -68,11 +80,18 @@ public class Partida {
     // Tiempo que conservamos del turno mientras se resuelve el ataque.
     private long tiempoDeTurnoPausado;
 
-    // Límite básico de una Bola de nieve por turno.
-    // Usar Devolver no consume este permiso.
-    private boolean bolaDeNieveUsada;
+    // Cuenta lanzamientos desde la mano durante el turno actual.
+    // Devolver no incrementa este contador.
+    private int bolasLanzadasEnTurno;
+
+    // Solo se habilita al resolverse la primera bola sin impacto.
+    private boolean segundaBolaHabilitada;
+
     // Cada partida tiene su propio mazo y descarte.
     private final Mazo mazo = new Mazo();
+
+    // Conserva el equipo activo de cada jugador, separado de su mano.
+    private final Equipamiento equipamiento = new Equipamiento();
 
     // Cada identificador tiene una mano independiente.
     // Solo Partida modifica estas listas.
@@ -86,6 +105,22 @@ public class Partida {
     // Los efectos no guardan información particular de un jugador.
     // Construimos una sola vez la asociación entre cartas y efectos.
     private final Map<TipoCarta, EfectoCarta> efectosPorTipo = crearEfectosDeCartas();
+
+    // Los beneficios de inicio de turno tienen su propio registro.
+    // Equipar una carta no ejecuta automáticamente estos efectos.
+    private final Map<TipoCarta, EfectoInicioTurno> efectosDeInicioTurno = Map.of(TipoCarta.ARBOL_NAVIDENO,new EfectoArbolNavideno());
+
+    // Los efectos automáticos se agrupan por el momento en que se activan.
+    private final Map<TipoCarta, EfectoAlRecibirDanio> efectosAlRecibirDanio = Map.of(TipoCarta.BULLY_NAVIDENO,new EfectoBullyNavideno());
+
+    // Se consultan antes de eliminar y determinar el resultado.
+    private final Map<TipoCarta, EfectoAnteDanioLetal> efectosAnteDanioLetal = Map.of(TipoCarta.LO_RECALENTADO_DE_ANOCHE,new EfectoLoRecalentadoDeAnoche());
+
+    // Beneficios del atacante cuando su bola efectivamente causa daño.
+    private final Map<TipoCarta, EfectoAlCausarDanio> efectosAlCausarDanio = Map.of(TipoCarta.PINZA_DEL_ASADOR,new EfectoPinzaDelAsador());
+
+    // Se consultan cuando termina toda la cadena de la bola.
+    private final Map<TipoCarta, EfectoAlFinalizarBola> efectosAlFinalizarBola = Map.of(TipoCarta.DOBLE_ENTREGA,new EfectoDobleEntrega());
 
     // Adaptador privado entre los efectos y el estado de esta partida.
     // No se entrega al navegador ni se expone mediante un getter.
@@ -105,8 +140,8 @@ public class Partida {
 
                 @Override
                 public void cerrarAtaque() {
-                    // Recupera el tiempo restante del turno original.
-                    cerrarAtaquePendiente();
+                    // Esquivar cierra la cadena completa como bloqueada.
+                    cerrarAtaquePendiente(ResultadoBolaDeNieve.BLOQUEADA);
                 }
 
                 @Override
@@ -164,6 +199,108 @@ public class Partida {
 
                     return recuperadas;
                 }
+
+                @Override
+                public int robarCartas(String jugador, int cantidad) {
+                    // Los efectos no pueden entregar cartas a alguien
+                    // eliminado o que haya abandonado.
+                    if (fase != Fase.EN_JUEGO
+                            || cantidad <= 0
+                            || !sigueParticipando(jugador)) {
+                        return 0;
+                    }
+
+                    List<Carta> mano = manosPorJugador.get(jugador);
+
+                    if (mano == null) {
+                        return 0;
+                    }
+
+                    // Mazo administra también el reciclado del descarte.
+                    // Puede devolver menos cartas si no quedan suficientes.
+                    List<Carta> robadas = mazo.robar(cantidad);
+                    mano.addAll(robadas);
+
+                    // La cantidad es pública; los tipos y los identificadores
+                    // de las cartas robadas siguen siendo privados.
+                    if (!robadas.isEmpty()) {
+                        registrarEvento(
+                                jugador,
+                                "roba " + robadas.size() + " carta(s).",
+                                null);
+                    }
+
+                    return robadas.size();
+                }
+
+                @Override
+                public int causarDanioDirecto(String objetivo, int cantidad) {
+                    // Partida conserva el control de vidas,
+                    // eliminaciones y resultado.
+                    return Partida.this.aplicarDanioDirecto(
+                            objetivo, cantidad);
+                }
+
+                @Override
+                public boolean desequipar(String objetivo) {
+                    // Esta entrada es para efectos jugados durante la partida.
+                    // La limpieza por eliminación utiliza directamente
+                    // la operación interna de Partida.
+                    if (fase != Fase.EN_JUEGO
+                            || !sigueParticipando(objetivo)) {
+                        return false;
+                    }
+
+                    return Partida.this.desequipar(objetivo);
+                }
+
+                @Override
+                public boolean robarEquipo(String jugador, String objetivo) {
+                    return Partida.this.robarEquipo(jugador, objetivo);
+                }
+
+                @Override
+                public boolean evitarEliminacionConUnaVida(String jugador) {
+                    // Se solicita antes de descontar un daño letal.
+                    // No permite revivir eliminados ni abandonados.
+                    if (fase != Fase.EN_JUEGO
+                            || !sigueParticipando(jugador)) {
+                        return false;
+                    }
+
+                    vidasPorJugador.put(jugador, 1);
+                    return true;
+                }
+
+                @Override
+                public void descartarMano(String jugador) {
+                    // El jugador sigue participando:
+                    // la salvación evitó procesar su eliminación.
+                    if (fase != Fase.EN_JUEGO
+                            || !sigueParticipando(jugador)) {
+                        return;
+                    }
+
+                    int cantidad = manosPorJugador
+                            .getOrDefault(jugador, List.of()).size();
+
+                    Partida.this.descartarManoDe(jugador);
+
+                    registrarEvento(
+                            jugador,
+                            "descarta toda su mano: "
+                                    + cantidad + " carta(s).",
+                            null);
+                }
+
+                @Override
+                public boolean robarRecuperacionAlAzar(
+                        String jugador, String objetivo) {
+
+                    return Partida.this.robarRecuperacionAlAzar(
+                            jugador, objetivo);
+                }
+
     };
 
 
@@ -175,6 +312,10 @@ public class Partida {
         efectos.put(TipoCarta.BOLA_DE_NIEVE, new EfectoBolaDeNieve());
         efectos.put(TipoCarta.ESQUIVAR, new EfectoEsquivar());
         efectos.put(TipoCarta.DEVOLVER, new EfectoDevolver());
+
+        // Comparten la categoría, pero sus efectos tienen destinos distintos.
+        efectos.put(TipoCarta.GRINCH, new EfectoGrinch());
+        efectos.put(TipoCarta.EN_TARLIPES, new EfectoEnTarlipes());
 
         // Todas las comidas actuales recuperan una vida.
         // Compartimos la implementación y configuramos su alcance y nombre.
@@ -253,6 +394,9 @@ public class Partida {
 
         jugadoresQueAbandonaron.add(identificador);
         descartarManoDe(identificador);
+
+        // Abandonar libera también la zona de equipo.
+        desequipar(identificador);
 
         if (cancelaAtaque) {
             // Las cartas utilizadas siguen en el descarte.
@@ -518,17 +662,37 @@ public class Partida {
 
     private void iniciarTurnoActual() {
         // El nuevo turno recupera el permiso para lanzar una bola.
-        bolaDeNieveUsada = false;
+        // Cada turno comienza con un lanzamiento normal disponible.
+        bolasLanzadasEnTurno = 0;
+        segundaBolaHabilitada = false;
+
         String identificador = ordenDeTurnos.get(posicionDeTurno);
         List<Carta> mano = manosPorJugador.get(identificador);
 
-        // El robo ocurre una sola vez al comenzar el turno.
-        // Reconectarse o consultar el estado no vuelve a entregar cartas.
+        // Robo normal: dos cartas al comenzar el turno.
         mano.addAll(mazo.robar(2));
 
-        // El minuto empieza después del robo.
+        registrarEvento(
+                identificador,
+                "comienza el turno " + numeroDeTurno + "/24.",
+                null);
+
+        // Solo consultamos el equipo que ya estaba colocado.
+        Carta equipo = equipamiento.getEquipoDe(identificador);
+
+        if (equipo != null) {
+            EfectoInicioTurno efecto =
+                    efectosDeInicioTurno.get(equipo.tipo());
+
+            // Los equipos sin un beneficio de inicio de turno
+            // no ejecutan ninguna acción en este momento.
+            if (efecto != null) {
+                efecto.aplicar(contextoEfectos, identificador);
+            }
+        }
+
+        // El minuto empieza después del robo normal y sus adicionales.
         iniciarRelojDeTurno();
-        registrarEvento(identificador,"comienza el turno " + numeroDeTurno + "/24.",null);
     }
 
     private boolean sigueParticipando(String identificador) {
@@ -550,6 +714,256 @@ public class Partida {
                         || carta.tipo() == TipoCarta.DEVOLVER);
     }
 
+    public synchronized Carta getEquipoDe(String jugador) {
+        // El equipo activo es información pública.
+        // Carta es inmutable: devolverla no permite cambiar su contenido.
+        return equipamiento.getEquipoDe(jugador);
+    }
+
+    public synchronized boolean puedeEquiparCarta(
+            String jugador, String identificadorCarta) {
+
+        // Permite informar al frontend qué cartas puede habilitar.
+        return buscarEquipoUtilizable(jugador, identificadorCarta) != null;
+    }
+
+    public synchronized boolean equiparCarta(
+            String jugador, String identificadorCarta) {
+
+        // Validamos toda la solicitud antes de tocar el equipo anterior.
+        Carta nuevoEquipo =
+                buscarEquipoUtilizable(jugador, identificadorCarta);
+
+        if (nuevoEquipo == null) {
+            return false;
+        }
+
+        // Reutilizamos la acción desequipar:
+        // retira el equipo anterior y lo envía al descarte.
+        // Si no había equipo, no modifica nada.
+        desequipar(jugador);
+
+        // La carta nueva sale de la mano y ocupa la zona de equipo.
+        // No se descarta al equiparla.
+        manosPorJugador.get(jugador).remove(nuevoEquipo);
+        equipamiento.colocarEquipo(jugador, nuevoEquipo);
+
+        registrarEvento(
+                jugador,
+                "equipa " + nuevoEquipo.tipo().getNombre() + ".",
+                null);
+
+        return true;
+    }
+
+    private Carta buscarEquipoUtilizable(
+            String jugador, String identificadorCarta) {
+
+        // Solo permitimos equipar durante el turno propio,
+        // sin ataques pendientes y antes de que venza el tiempo.
+        if (fase != Fase.EN_JUEGO
+                || combate.hayAtaquePendiente()
+                || !sigueParticipando(jugador)
+                || !jugador.equals(getJugadorDeTurno())
+                || identificadorCarta == null
+                || System.nanoTime() - vencimientoDelTurno >= 0) {
+            return null;
+        }
+
+        // Comprobamos el ejemplar exacto y su categoría en la mano real.
+        return manosPorJugador.getOrDefault(jugador, List.of()).stream()
+                .filter(carta ->
+                        carta.identificador().equals(identificadorCarta)
+                        && carta.tipo().getCategoria() == CategoriaCarta.EQUIPO)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private boolean robarRecuperacionAlAzar(
+            String jugador, String objetivo) {
+
+        if (fase != Fase.EN_JUEGO
+                || !sigueParticipando(jugador)
+                || objetivo == null
+                || jugador.equals(objetivo)
+                || !roles.containsKey(objetivo)
+                || jugadoresQueAbandonaron.contains(objetivo)
+                || jugadoresEliminados.contains(objetivo)) {
+            return false;
+        }
+
+        // El objetivo puede haber llegado a cero vidas con esta bola,
+        // pero todavía no debe haberse procesado su eliminación.
+        List<Carta> manoObjetivo = manosPorJugador.get(objetivo);
+        List<Carta> manoDestino = manosPorJugador.get(jugador);
+
+        if (manoObjetivo == null || manoDestino == null) {
+            return false;
+        }
+
+        // Todas las comidas actuales recuperan vidas, incluidas las grupales.
+        List<Carta> candidatas = new ArrayList<>(
+                manoObjetivo.stream()
+                        .filter(carta ->
+                                carta.tipo().getCategoria()
+                                        == CategoriaCarta.COMIDA)
+                        .toList());
+
+        if (candidatas.isEmpty()) {
+            return false;
+        }
+
+        // Sorteamos entre los ejemplares disponibles sin cambiar
+        // el orden de las demás cartas de la mano del objetivo.
+        Collections.shuffle(candidatas);
+        Carta robada = candidatas.get(0);
+
+        // Transferimos el mismo ejemplar: no pasa por el descarte
+        // y no se ejecuta su efecto de curación.
+        manoObjetivo.remove(robada);
+        manoDestino.add(robada);
+
+        // Publicamos la acción, pero no revelamos qué carta privada se robó.
+        registrarEvento(
+                jugador,
+                "roba una carta de recuperación de vida de",
+                objetivo);
+
+        return true;
+    }
+
+    private boolean robarEquipo(String jugador, String objetivo) {
+        // Validamos los participantes antes de retirar una carta.
+        if (fase != Fase.EN_JUEGO
+                || !sigueParticipando(jugador)
+                || !sigueParticipando(objetivo)
+                || jugador.equals(objetivo)) {
+            return false;
+        }
+
+        List<Carta> manoDestino = manosPorJugador.get(jugador);
+
+        if (manoDestino == null) {
+            return false;
+        }
+
+        // Reutilizamos la retirada, pero no la acción desequipar:
+        // el destino de esta carta será una mano, no el descarte.
+        Carta equipoRobado = equipamiento.retirarEquipoDe(objetivo);
+
+        if (equipoRobado == null) {
+            return false;
+        }
+
+        // Conservamos el mismo ejemplar y su identificador.
+        // El equipo que ya tenga el ladrón permanece colocado.
+        manoDestino.add(equipoRobado);
+
+        registrarEvento(
+                jugador,
+                "roba el equipo " + equipoRobado.tipo().getNombre() + " de",
+                objetivo);
+
+        return true;
+    }
+
+    private boolean desequipar(String jugador) {
+        // Retirar y descartar son pasos distintos.
+        // Un futuro robo reutilizará retirarEquipoDe sin descartar la carta.
+        Carta equipoRetirado = equipamiento.retirarEquipoDe(jugador);
+
+        if (equipoRetirado == null) {
+            return false;
+        }
+
+        mazo.descartar(equipoRetirado);
+
+        registrarEvento(
+                jugador,
+                "desequipa " + equipoRetirado.tipo().getNombre()
+                        + " y lo envía al descarte.",
+                null);
+
+        return true;
+    }
+
+    public synchronized boolean puedeUsarCartaContraEquipo(
+            String jugador,
+            String identificadorCarta,
+            String objetivo) {
+
+        // Permite informar al frontend qué combinaciones puede habilitar.
+        return buscarCartaContraEquipoUtilizable(
+                jugador, identificadorCarta, objetivo) != null;
+    }
+
+    public synchronized boolean usarCartaContraEquipo(
+            String jugador,
+            String identificadorCarta,
+            String objetivo) {
+
+        // Volvemos a validar la solicitud real, aunque el navegador
+        // haya mostrado la acción como disponible.
+        Carta carta = buscarCartaContraEquipoUtilizable(
+                jugador, identificadorCarta, objetivo);
+
+        if (carta == null) {
+            return false;
+        }
+
+        EfectoCarta efecto = efectosPorTipo.get(carta.tipo());
+
+        // No consumimos una carta cuyo efecto no esté implementado.
+        if (efecto == null) {
+            return false;
+        }
+
+        // Todas las condiciones pasaron antes de modificar el estado.
+        // Grinch o En tarlipes se descarta; el destino del equipo
+        // lo determina su clase de efecto.
+        manosPorJugador.get(jugador).remove(carta);
+        mazo.descartar(carta);
+
+        efecto.aplicar(contextoEfectos, jugador, objetivo);
+
+        // Esta acción no consume el permiso de lanzar una Bola de nieve.
+        return true;
+    }
+
+    private Carta buscarCartaContraEquipoUtilizable(
+            String jugador,
+            String identificadorCarta,
+            String objetivo) {
+
+        // Solo durante el turno propio, antes del vencimiento
+        // y sin un ataque esperando respuesta.
+        if (fase != Fase.EN_JUEGO
+                || combate.hayAtaquePendiente()
+                || !sigueParticipando(jugador)
+                || !jugador.equals(getJugadorDeTurno())
+                || identificadorCarta == null
+                || System.nanoTime() - vencimientoDelTurno >= 0) {
+            return null;
+        }
+
+        // El objetivo debe ser otro participante activo.
+        // Estar reconectando no impide que sus equipos sean afectados.
+        if (!sigueParticipando(objetivo)
+                || jugador.equals(objetivo)
+                || equipamiento.getEquipoDe(objetivo) == null) {
+            return null;
+        }
+
+        // Comprobamos el ejemplar exacto en la mano del jugador.
+        // Por ahora estas son las dos cartas implementadas para esta acción.
+        return manosPorJugador.getOrDefault(jugador, List.of()).stream()
+                .filter(carta ->
+                        carta.identificador().equals(identificadorCarta)
+                        && (carta.tipo() == TipoCarta.GRINCH
+                            || carta.tipo() == TipoCarta.EN_TARLIPES))
+                .findFirst()
+                .orElse(null);
+    }
 
     public synchronized boolean puedeUsarComida(
             String jugador, String identificadorCarta) {
@@ -631,13 +1045,36 @@ public class Partida {
                         < roles.get(jugador).getVidasIniciales();
     }
 
+    private boolean tienePermisoDeLanzamiento(String jugador) {
+        if (bolasLanzadasEnTurno == 0) {
+            return true;
+        }
+
+        // Nunca permitimos una tercera bola.
+        if (bolasLanzadasEnTurno != 1 || !segundaBolaHabilitada) {
+            return false;
+        }
+
+        // El beneficio exige que el equipo siga colocado.
+        Carta equipo = equipamiento.getEquipoDe(jugador);
+
+        EfectoAlFinalizarBola efecto = equipo == null
+                ? null
+                : efectosAlFinalizarBola.get(equipo.tipo());
+
+        return efecto != null
+                && efecto.permiteSegundaBola(
+                        ResultadoBolaDeNieve.BLOQUEADA,
+                        bolasLanzadasEnTurno);
+    }
+
     public synchronized boolean lanzarBolaDeNieve(String atacante, String identificadorCarta, String objetivo) {
 
         // Solo puede lanzar el jugador de turno, mientras no haya
         // otro ataque pendiente y conserve su permiso para lanzar.
         if (fase != Fase.EN_JUEGO
                 || combate.getAtaquePendiente() != null
-                || bolaDeNieveUsada
+                || !tienePermisoDeLanzamiento(atacante)
                 || !sigueParticipando(atacante)
                 || !atacante.equals(getJugadorDeTurno())) {
             return false;
@@ -673,7 +1110,8 @@ public class Partida {
         pausarRelojDeTurno();
         mano.remove(bola);
         mazo.descartar(bola);
-        bolaDeNieveUsada = true;
+        // Solo incrementamos después de validar y consumir la carta.
+        bolasLanzadasEnTurno++;
 
         // Abrimos una espera nueva, con su propio identificador y plazo.
         // Las vidas todavía no cambian: primero puede haber una defensa.
@@ -760,33 +1198,127 @@ public class Partida {
         return true;
     }
 
-    private void resolverDanioPendiente() {
-        String objetivo = combate.getAtaquePendiente().objetivo();
+    private int aplicarDanioDirecto(String objetivo, int cantidad) {
+        // La represalia de Bully no activa beneficios de una Bola de nieve.
+        // Sí permite salvarse mediante Lo recalentado de anoche.
+        return aplicarDanio(objetivo, cantidad, null);
+    }
 
-        // Guardamos quién tenía el turno antes de aplicar el daño.
-        // Una bola devuelta puede eliminar al jugador de turno.
-        boolean objetivoTieneElTurno = objetivo.equals(getJugadorDeTurno());
+    private int aplicarDanio(
+            String objetivo,
+            int cantidad,
+            String atacanteDeBola) {
 
-        if (sigueParticipando(objetivo)) {
-            int vidasRestantes = Math.max(0, vidasPorJugador.get(objetivo) - 1);
-            vidasPorJugador.put(objetivo, vidasRestantes);
-            registrarEvento(objetivo,"recibe 1 de daño. Le quedan " + vidasRestantes + " vidas.",null);
+        if (fase != Fase.EN_JUEGO
+                || cantidad <= 0
+                || !sigueParticipando(objetivo)) {
+            return 0;
+        }
 
-            if (vidasRestantes == 0) {
-                // Descarta su mano y comprueba si hay un ganador.
-                eliminarJugador(objetivo);
+        int vidasActuales = vidasPorJugador.get(objetivo);
+        int danioAplicado = Math.min(cantidad, vidasActuales);
+
+        // Primero comprobamos si un equipo evita el daño letal.
+        if (danioAplicado == vidasActuales) {
+            Carta equipo = equipamiento.getEquipoDe(objetivo);
+
+            EfectoAnteDanioLetal efecto = equipo == null
+                    ? null
+                    : efectosAnteDanioLetal.get(equipo.tipo());
+
+            if (efecto != null
+                    && efecto.aplicar(contextoEfectos, objetivo)) {
+
+                // Sin daño aplicado no se activa la Pinza.
+                return 0;
             }
         }
 
-        // Cerramos la espera y recuperamos el tiempo pausado,
-        // salvo que la partida haya terminado.
-        cerrarAtaquePendiente();
+        int vidasRestantes = vidasActuales - danioAplicado;
+        vidasPorJugador.put(objetivo, vidasRestantes);
+
+        registrarEvento(
+                objetivo,
+                "recibe " + danioAplicado
+                        + " de daño. Le quedan "
+                        + vidasRestantes + " vidas.",
+                null);
+
+        // Solo las bolas activan estos beneficios.
+        // El objetivo todavía conserva su mano, incluso con cero vidas.
+        if (atacanteDeBola != null
+                && sigueParticipando(atacanteDeBola)) {
+
+            Carta equipoAtacante =
+                    equipamiento.getEquipoDe(atacanteDeBola);
+
+            EfectoAlCausarDanio efecto = equipoAtacante == null
+                    ? null
+                    : efectosAlCausarDanio.get(equipoAtacante.tipo());
+
+            if (efecto != null) {
+                efecto.aplicar(
+                        contextoEfectos, atacanteDeBola, objetivo);
+            }
+        }
+
+        // Después del posible robo se descarta el resto de la mano
+        // y se comprueba el resultado de la eliminación.
+        if (vidasRestantes == 0) {
+            eliminarJugador(objetivo);
+        }
+
+        return danioAplicado;
+    }
+
+    private void resolverDanioPendiente() {
+        AtaquePendiente ataque = combate.getAtaquePendiente();
+
+        if (ataque == null) {
+            return;
+        }
+
+        String objetivo = ataque.objetivo();
+
+        // Guardamos el jugador de turno antes de cualquier eliminación.
+        // Puede caer por una devolución o por la represalia de Bully.
+        String jugadorDeTurno = getJugadorDeTurno();
+
+        // Conservamos el equipo antes del daño.
+        // Si su dueño muere, eliminarJugador lo retirará y descartará,
+        // pero su represalia todavía puede ejecutarse si el juego continúa.
+        Carta equipoAlRecibirDanio = equipamiento.getEquipoDe(objetivo);
+
+        // Identificamos al atacante de la bola para ejecutar sus beneficios
+        // antes de procesar una posible eliminación del objetivo.
+        int danioAplicado = aplicarDanio(objetivo, 1, ataque.atacante());
+
+        if (danioAplicado > 0
+                && fase == Fase.EN_JUEGO
+                && equipoAlRecibirDanio != null) {
+
+            EfectoAlRecibirDanio efecto = efectosAlRecibirDanio.get(
+                    equipoAlRecibirDanio.tipo());
+
+            if (efecto != null) {
+                // No exigimos que el dueño siga vivo.
+                // Sí exigimos que el primer daño no haya terminado la partida.
+                efecto.aplicar(
+                        contextoEfectos,
+                        objetivo,
+                        ataque.atacante());
+            }
+        }
+
+        // Hubo un impacto, aunque Lo recalentado evitara el daño letal.
+        // Por eso no se habilita Doble entrega.
+        cerrarAtaquePendiente(ResultadoBolaDeNieve.IMPACTO);
 
         if (fase == Fase.EN_JUEGO
-                && objetivoTieneElTurno
-                && !sigueParticipando(objetivo)) {
-            // Si una devolución eliminó al jugador de turno,
-            // comenzamos el siguiente en lugar de esperar al eliminado.
+                && jugadorDeTurno != null
+                && !sigueParticipando(jugadorDeTurno)) {
+
+            // También cubre que Bully elimine al jugador de turno.
             avanzarTurno();
         }
     }
@@ -798,28 +1330,63 @@ public class Partida {
     }
 
     private void cerrarAtaquePendiente() {
-        // Combate finaliza la espera; Partida recupera el reloj del turno.
+        // Los cierres sin resultado explícito son cancelaciones,
+        // por ejemplo, cuando alguien abandona.
+        cerrarAtaquePendiente(ResultadoBolaDeNieve.CANCELADA);
+    }
+
+    private void cerrarAtaquePendiente(ResultadoBolaDeNieve resultadoBola) {
+        if (!combate.hayAtaquePendiente()) {
+            return;
+        }
+
         combate.cerrarAtaque();
 
-        // Solo reanudamos si la partida sigue en juego.
         if (fase == Fase.EN_JUEGO) {
-            vencimientoDelTurno = System.nanoTime() + tiempoDeTurnoPausado;
+            // Recuperamos únicamente el tiempo que quedaba del turno.
+            vencimientoDelTurno =
+                    System.nanoTime() + tiempoDeTurnoPausado;
+
+            String jugadorDeTurno = getJugadorDeTurno();
+
+            if (sigueParticipando(jugadorDeTurno)) {
+                Carta equipo =
+                        equipamiento.getEquipoDe(jugadorDeTurno);
+
+                EfectoAlFinalizarBola efecto = equipo == null
+                        ? null
+                        : efectosAlFinalizarBola.get(equipo.tipo());
+
+                if (efecto != null
+                        && efecto.permiteSegundaBola(
+                                resultadoBola,
+                                bolasLanzadasEnTurno)) {
+
+                    // Partida administra el permiso del turno.
+                    segundaBolaHabilitada = true;
+
+                    // El efecto ejecuta su activación y registra su mensaje.
+                    efecto.activar(contextoEfectos, jugadorDeTurno);
+                }
+            }
         }
 
         tiempoDeTurnoPausado = 0;
     }
 
     public synchronized boolean puedeLanzarBolaDeNieve(String identificador) {
-        // Este permiso sirve para dibujar los controles.
-        // Al recibir la acción, lanzarBolaDeNieve vuelve a validarla.
+        // Este permiso dibuja los controles.
+        // lanzarBolaDeNieve vuelve a validar la solicitud real.
         return fase == Fase.EN_JUEGO
-                && combate.getAtaquePendiente() == null
-                && !bolaDeNieveUsada
+                && !combate.hayAtaquePendiente()
                 && sigueParticipando(identificador)
                 && identificador.equals(getJugadorDeTurno())
+                && tienePermisoDeLanzamiento(identificador)
                 && System.nanoTime() - vencimientoDelTurno < 0
-                && manosPorJugador.getOrDefault(identificador, List.of()).stream()
-                        .anyMatch(carta -> carta.tipo() == TipoCarta.BOLA_DE_NIEVE);
+                && manosPorJugador.getOrDefault(
+                        identificador, List.of()).stream()
+                        .anyMatch(carta ->
+                                carta.tipo() == TipoCarta.BOLA_DE_NIEVE);
     }
 
 
@@ -1012,6 +1579,9 @@ public class Partida {
         // y determinar si comparte la victoria al terminar la partida.
         vidasPorJugador.put(identificador, 0);
         descartarManoDe(identificador);
+
+        // También se descarta el equipo al eliminarse por daño o inactividad.
+        desequipar(identificador);
         // El rol solo se hace público cuando el jugador queda eliminado.
         registrarEvento(identificador,"queda eliminado. Su rol era " + roles.get(identificador).getNombre() + ".",null);
 

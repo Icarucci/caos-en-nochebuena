@@ -293,6 +293,61 @@ public class JuegoWebSocket extends TextWebSocketHandler {
         if (registroSalas.estaIniciada(codigoSala)) {
             Partida partida = registroSalas.partidaDe(codigoSala);
             String identificador = buscarIdentificador(origen);
+
+            if (texto.startsWith("usar-carta-contra-equipo:")) {
+                // Recibimos dos líneas: carta propia y nombre del objetivo.
+                String[] datos = texto
+                        .substring("usar-carta-contra-equipo:".length())
+                        .split("\n", -1);
+
+                if (datos.length != 2) {
+                    enviarEstadoPreparacion(identificador, jugador);
+                    return;
+                }
+
+                // Resolvemos el objetivo únicamente dentro de esta sala.
+                // No compartimos sus identificadores de reconexión.
+                String objetivo = jugadores.entrySet().stream()
+                        .filter(entrada ->
+                                codigoSala.equals(
+                                        entrada.getValue().codigoSala())
+                                && datos[1].equals(
+                                        entrada.getValue().nombre()))
+                        .map(Map.Entry::getKey)
+                        .findFirst()
+                        .orElse(null);
+
+                // Partida valida turno, carta, participantes y equipo activo.
+                if (objetivo != null
+                        && partida.usarCartaContraEquipo(
+                                identificador, datos[0], objetivo)) {
+
+                    avisarPreparacionSala(codigoSala);
+                } else {
+                    // No consumimos la carta si la solicitud es rechazada.
+                    enviarEstadoPreparacion(identificador, jugador);
+                }
+
+                return;
+            }
+
+            if (texto.startsWith("equipar-carta:")) {
+                String identificadorCarta =
+                        texto.substring("equipar-carta:".length());
+
+                // Partida valida la carta, el turno y el plazo.
+                // La identidad del jugador proviene de la conexión.
+                if (partida.equiparCarta(identificador, identificadorCarta)) {
+                    // Actualizamos manos, descarte, equipos y actividad.
+                    avisarPreparacionSala(codigoSala);
+                } else {
+                    // Una solicitud rechazada recupera el estado real.
+                    enviarEstadoPreparacion(identificador, jugador);
+                }
+
+                return;
+            }
+
             if (texto.startsWith("usar-comida:")) {
                 String identificadorCarta =
                         texto.substring("usar-comida:".length());
@@ -518,6 +573,72 @@ public class JuegoWebSocket extends TextWebSocketHandler {
                 + partida.getCantidadCartasEnDescarte());
     }
 
+    private void enviarEstadoEquipamiento(String identificador, Jugador jugador, Partida partida) {
+
+        // Cada jugador recibe únicamente los identificadores
+        // de sus propias cartas que puede equipar.
+        String disponibles = partida.getManoDe(identificador).stream()
+                .filter(carta ->
+                        partida.puedeEquiparCarta(
+                                identificador, carta.identificador()))
+                .map(carta -> carta.identificador())
+                .collect(java.util.stream.Collectors.joining("\n"));
+
+        enviar(jugador, "equipos-disponibles:" + disponibles);
+
+        // Los equipos activos son públicos.
+        // Cada grupo contiene dos líneas: jugador y nombre del equipo.
+        List<String> equiposPublicos = new ArrayList<>();
+
+        for (var entrada : jugadores.entrySet()) {
+            Jugador participante = entrada.getValue();
+
+            if (!jugador.codigoSala().equals(participante.codigoSala())) {
+                continue;
+            }
+
+            var equipo = partida.getEquipoDe(entrada.getKey());
+
+            if (equipo != null) {
+                equiposPublicos.add(participante.nombre());
+                equiposPublicos.add(equipo.tipo().getNombre());
+            }
+        }
+
+        // Enviamos la lista completa, incluso vacía, para que la interfaz
+        // también pueda quitar los equipos que dejaron de estar activos.
+        enviar(jugador, "equipos:" + String.join("\n", equiposPublicos));
+
+        // Cada combinación ocupa dos líneas:
+        // identificador de una carta propia y nombre del objetivo permitido.
+        List<String> accionesDisponibles = new ArrayList<>();
+
+        for (var carta : partida.getManoDe(identificador)) {
+            for (var entrada : jugadores.entrySet()) {
+                Jugador posibleObjetivo = entrada.getValue();
+
+                if (!jugador.codigoSala().equals(
+                        posibleObjetivo.codigoSala())) {
+                    continue;
+                }
+
+                if (partida.puedeUsarCartaContraEquipo(
+                        identificador,
+                        carta.identificador(),
+                        entrada.getKey())) {
+
+                    accionesDisponibles.add(carta.identificador());
+                    accionesDisponibles.add(posibleObjetivo.nombre());
+                }
+            }
+        }
+
+        // La lista vacía también se envía para retirar permisos anteriores.
+        enviar(
+                jugador,
+                "acciones-equipo-disponibles:"
+                        + String.join("\n", accionesDisponibles));
+    }
 
     private void enviarEstadoCombate(String identificador, Jugador jugador) {
         Partida partida = registroSalas.partidaDe(jugador.codigoSala());
@@ -525,6 +646,9 @@ public class JuegoWebSocket extends TextWebSocketHandler {
         if (partida == null) {
             return;
         }
+
+        // Se recupera al reconectar y se actualiza junto al combate.
+        enviarEstadoEquipamiento(identificador, jugador, partida);
 
         // Enviamos únicamente identificadores de comidas propias utilizables.
         // Una lista vacía significa que ninguna está habilitada actualmente.

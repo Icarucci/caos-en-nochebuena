@@ -232,3 +232,107 @@ están pendientes de implementar.
   los límites de vidas y los permisos de uso.
 - Los botones actuales son provisorios. En React se seleccionará la
   carta con clic o toque y se confirmará su uso antes de enviarlo.
+
+  ### Zona de equipo — 27/11/2026
+
+- Se creó Equipamiento para administrar un equipo activo por jugador.
+- Equipar valida la carta y el turno antes de modificar el estado.
+- Si existe un equipo anterior, se desequipa y se envía al descarte
+  antes de colocar el nuevo.
+- La operación interna de retirar devuelve la carta sin descartarla,
+  permitiendo reutilizarla en un futuro robo de equipo.
+- Equipar está permitido durante el turno propio, sin ataques pendientes.
+- Los equipos son públicos y se conservan al reconectar.
+- Al abandonar o quedar eliminado, el equipo pasa al descarte.
+- Se verificaron manualmente estos comportamientos.
+- Los beneficios particulares y las cartas que quitan o roban equipos
+  siguen pendientes.
+
+  ### Beneficio de Árbol navideño — 27/11/2026
+
+- Se creó EfectoInicioTurno para comportamientos ejecutados al comenzar
+  un turno y EfectoArbolNavideno como primera implementación.
+- Árbol navideño permite robar una carta adicional mientras esté equipado.
+- Equiparlo o reconectarse no provoca robos adicionales.
+- Reemplazarlo elimina su beneficio para los siguientes turnos.
+- El límite al finalizar el turno continúa siendo de cuatro cartas.
+- Se incorporó al contexto una operación reutilizable de robo de cartas.
+- Las pruebas Maven finalizaron correctamente y se verificó manualmente
+  el funcionamiento del equipo.
+
+  ### Beneficio de Bully navideño — 27/11/2026
+
+- Se implementó su activación automática al recibir daño de una Bola
+  de nieve, causando un daño directo e indefendible al atacante actual.
+- Esquivar o Devolver evita el daño y no activa Bully.
+- La represalia no consume el equipo ni activa otro Bully.
+- Bully no cuenta como defensa propia.
+- Primero se resuelve el daño al objetivo, su eliminación y el resultado.
+- Si la partida continúa, se aplica la represalia, aunque el dueño del
+  equipo haya quedado eliminado.
+- Si el primer daño termina la partida, no se aplica la represalia.
+- Si cae el jugador de turno y la partida continúa, se avanza al siguiente.
+- Se verificó manualmente el funcionamiento.
+
+### Grinch y En tarlipes — 28/11/2026
+
+- Grinch retira el equipo del objetivo y lo incorpora a la mano
+  de quien juega la carta, sin equiparlo automáticamente.
+- En tarlipes retira el equipo del objetivo y lo envía al descarte.
+- Ambas cartas se descartan después de utilizarlas.
+- El servidor valida turno, plazo, propiedad de la carta y objetivo.
+- Solo pueden utilizarse contra otro participante activo con equipo,
+  durante el turno propio y sin un ataque pendiente.
+- Se verificó manualmente el funcionamiento de ambas cartas.
+
+### Reciclado del descarte — 28/11/2026
+
+- Al agotarse el mazo, se mezclan las cartas del descarte excepto
+  la última, que permanece visible en su lugar.
+- Si el descarte contiene una sola carta, no puede reciclarse.
+- Los ejemplares reciclados conservan sus identificadores.
+- Se agregaron dos pruebas automáticas para estas condiciones.
+- La suite completó tres pruebas sin fallos ni errores.
+
+### Lo recalentado de anoche y reciclado inmediato — 28/11/2026
+
+- Se implementó un efecto automático que evita el daño letal antes
+  de procesar la eliminación y deja al jugador con una vida.
+- Se descarta primero el equipo y después toda la mano.
+- Finalmente se intenta robar una carta del mazo.
+- No se activa por abandono ni eliminación por inactividad.
+- Se verificó la salvación ante Bola de nieve y represalia de Bully,
+  y la eliminación normal ante un daño letal posterior sin el equipo.
+- Al robar la última carta del mazo, se intenta reciclar inmediatamente
+  el descarte, conservando su carta superior.
+- Se agregó una prueba automática del reciclado inmediato.
+
+### Beneficio de Pinza del asador — 28/11/2026
+
+- Se activa automáticamente cuando una Bola de nieve del portador
+  causa daño a otro jugador.
+- Transfiere a su mano una comida aleatoria del objetivo, incluidas
+  las comidas grupales, sin utilizarla ni descartarla.
+- Si el objetivo no tiene comidas, no se transfiere ninguna carta.
+- La Pinza permanece equipada.
+- Ante un golpe letal, el robo ocurre antes de descartar la mano
+  del jugador eliminado.
+- No se activa si se evita el daño ni por la represalia de Bully.
+- La actividad no revela el nombre de la carta robada.
+- Se verificó manualmente el funcionamiento.
+
+### Beneficio de Doble entrega — 28/11/2026
+
+- Si la primera Bola de nieve termina bloqueada, permite un segundo
+  lanzamiento desde la mano contra cualquier objetivo válido,
+  incluido el mismo del primer lanzamiento.
+- Se espera la resolución completa de las devoluciones.
+- El máximo es de dos lanzamientos por turno; cada uno consume su carta.
+- Un impacto, incluida la activación de Lo recalentado de anoche,
+  no habilita el lanzamiento adicional.
+- Las cancelaciones por abandono tampoco lo habilitan.
+- El equipo debe permanecer colocado y el contador se reinicia
+  al comenzar cada turno.
+- Se verificó manualmente el funcionamiento.
+- El mensaje de activación se registra desde EfectoDobleEntrega,
+  separado de la coordinación del turno en Partida.

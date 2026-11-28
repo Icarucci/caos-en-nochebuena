@@ -38,6 +38,12 @@ let rolesRevelados = new Map();
 let manoActual = [];
 // El servidor informa cuáles de nuestras comidas podemos usar.
 let comidasDisponibles = new Set();
+// Permisos privados para equipar cartas de nuestra mano.
+let equiposDisponibles = new Set();
+// Información pública: nombre del jugador y nombre de su equipo activo.
+let equiposPorNombre = new Map();
+// Relaciona cada carta propia con los objetivos permitidos por Java.
+let accionesEquipoDisponibles = new Map();
 let vidasPorNombre = new Map();
 let ataqueActual = null;
 let permisoParaAtacar = false;
@@ -82,8 +88,14 @@ function borrarAccesosDeSala(codigo) {
 
 function mostrarResultadoPartida(resultado, gano) {
   partidaFinalizada = true;
+  equiposDisponibles.clear();
+  actualizarVistaEquipamiento();
   // Al terminar, ninguna comida debe seguir habilitada.
   comidasDisponibles.clear();
+  // Evitamos conservar equipos o permisos de la sala anterior.
+  equiposDisponibles.clear();
+  equiposPorNombre.clear();
+  actualizarVistaEquipamiento();
   actualizarControlesComida();
   faseActual = "TERMINADA";
   permisoParaAtacar = false;
@@ -440,6 +452,63 @@ function conectar(sesion, accion) {
       actualizarControlesComida();
       return;
     }
+        if (mensaje.startsWith("equipos-disponibles:")) {
+      const texto = mensaje.slice("equipos-disponibles:".length);
+
+      equiposDisponibles = new Set(
+        texto === "" ? [] : texto.split("\n")
+      );
+
+      accionesEquipoDisponibles.clear();
+      actualizarVistaEquipamiento();
+      return;
+    }
+
+    if (mensaje.startsWith("equipos:")) {
+      const texto = mensaje.slice("equipos:".length);
+      const campos = texto === "" ? [] : texto.split("\n");
+
+      // Reemplazamos el estado completo para quitar equipos retirados.
+      equiposPorNombre = new Map();
+
+      for (let indice = 0; indice + 1 < campos.length; indice += 2) {
+        equiposPorNombre.set(campos[indice], campos[indice + 1]);
+      }
+
+      actualizarVistaEquipamiento();
+
+      // Redibujamos la información pública de los participantes.
+      if (ultimoTextoJugadores !== "") {
+        mostrarJugadores(ultimoTextoJugadores);
+      }
+
+      return;
+    }
+
+    if (mensaje.startsWith("acciones-equipo-disponibles:")) {
+      const texto = mensaje.slice(
+        "acciones-equipo-disponibles:".length
+      );
+      const campos = texto === "" ? [] : texto.split("\n");
+
+      accionesEquipoDisponibles = new Map();
+
+      // Cada grupo contiene una carta propia y un objetivo permitido.
+      for (let indice = 0; indice + 1 < campos.length; indice += 2) {
+        const carta = campos[indice];
+        const objetivo = campos[indice + 1];
+
+        if (!accionesEquipoDisponibles.has(carta)) {
+          accionesEquipoDisponibles.set(carta, []);
+        }
+
+        accionesEquipoDisponibles.get(carta).push(objetivo);
+      }
+
+      actualizarControlesContraEquipo();
+      return;
+    }
+
     if (mensaje.startsWith("mano:")) {
       const texto = mensaje.slice("mano:".length);
       const datos = texto === "" ? [] : texto.split("\n");
@@ -461,6 +530,70 @@ function conectar(sesion, accion) {
         // implementemos jugar y descartar cartas.
         elemento.dataset.identificador = identificador;
         elemento.dataset.tipo = tipo;
+
+        if (tipo === "GRINCH" || tipo === "EN_TARLIPES") {
+          const selector = document.createElement("select");
+          selector.dataset.objetivoEquipo = identificador;
+          selector.setAttribute(
+            "aria-label",
+            `Objetivo para ${nombre}`
+          );
+          selector.disabled = true;
+
+          const boton = document.createElement("button");
+          boton.type = "button";
+          boton.dataset.cartaContraEquipo = identificador;
+          boton.textContent = tipo === "GRINCH"
+            ? "Robar equipo"
+            : "Desequipar";
+          boton.disabled = true;
+
+          selector.addEventListener(
+            "change",
+            actualizarControlesContraEquipo
+          );
+
+          boton.addEventListener("click", () => {
+            if (boton.disabled || partidaFinalizada) {
+              return;
+            }
+
+            const objetivo = selector.value;
+
+            if (objetivo && enviar(
+              `usar-carta-contra-equipo:${identificador}\n${objetivo}`
+            )) {
+              // Esperamos la actualización del servidor.
+              boton.disabled = true;
+              selector.disabled = true;
+            }
+          });
+
+          elemento.append(" ", selector, " ", boton);
+        }
+
+        if (categoria === "EQUIPO") {
+          const botonEquipar = document.createElement("button");
+
+          botonEquipar.type = "button";
+          botonEquipar.textContent = "Equipar";
+          botonEquipar.dataset.equipar = identificador;
+          botonEquipar.disabled = true;
+
+          botonEquipar.addEventListener("click", () => {
+            if (botonEquipar.disabled || partidaFinalizada) {
+              return;
+            }
+
+            // Java decide si corresponde reemplazar un equipo anterior.
+            // Desde el navegador solo enviamos la carta seleccionada.
+            if (enviar(`equipar-carta:${identificador}`)) {
+              botonEquipar.disabled = true;
+            }
+          });
+
+          elemento.append(" ", botonEquipar);
+        }
 
         if (categoria === "COMIDA") {
           const botonComida = document.createElement("button");
@@ -517,6 +650,8 @@ function conectar(sesion, accion) {
       porId("zona-cartas").hidden = false;
       // Los botones recién creados recuperan los permisos del servidor.
       actualizarControlesComida();
+      // Habilitamos los botones recién creados según los permisos recibidos.
+      actualizarVistaEquipamiento();
       actualizarControlesCombate();
       return;
     }
@@ -812,6 +947,66 @@ function actualizarControlesComida() {
   });
 }
 
+function actualizarVistaEquipamiento() {
+  const equipo = equiposPorNombre.get(jugador?.nombre);
+
+  porId("equipo-propio").textContent =
+    `Tu equipo: ${equipo ?? "ninguno"}.`;
+
+  document.querySelectorAll("button[data-equipar]").forEach((boton) => {
+    // Estos permisos solo controlan la presentación.
+    // Java vuelve a comprobar cada solicitud.
+    boton.disabled = partidaFinalizada
+      || !equiposDisponibles.has(boton.dataset.equipar);
+  });
+
+  // También actualiza los controles recién creados en la mano
+  // y los deshabilita al finalizar la partida.
+  actualizarControlesContraEquipo();
+}
+
+function actualizarControlesContraEquipo() {
+  document.querySelectorAll(
+    "select[data-objetivo-equipo]"
+  ).forEach((selector) => {
+    const carta = selector.dataset.objetivoEquipo;
+    const objetivos = accionesEquipoDisponibles.get(carta) ?? [];
+
+    const actuales = [...selector.options]
+      .map((opcion) => opcion.value);
+
+    // No reconstruimos el selector en cada actualización del reloj.
+    // Conservamos la elección mientras siga siendo válida.
+    if (JSON.stringify(actuales) !== JSON.stringify(objetivos)) {
+      const seleccionAnterior = selector.value;
+
+      const opciones = objetivos.map((nombre) => {
+        const opcion = document.createElement("option");
+        opcion.value = nombre;
+        opcion.textContent = nombre;
+        return opcion;
+      });
+
+      selector.replaceChildren(...opciones);
+
+      if (objetivos.includes(seleccionAnterior)) {
+        selector.value = seleccionAnterior;
+      }
+    }
+
+    selector.disabled = partidaFinalizada || objetivos.length === 0;
+
+    const boton = selector.closest("li").querySelector(
+      "button[data-carta-contra-equipo]"
+    );
+
+    if (boton) {
+      boton.disabled = selector.disabled
+        || !objetivos.includes(selector.value);
+    }
+  });
+}
+
 function crearLinea(texto) {
   // textContent muestra los mensajes como texto, incluso si escriben etiquetas HTML.
   const linea = document.createElement("li");
@@ -891,6 +1086,10 @@ function mostrarJugadores(texto) {
     // Mostramos solamente la cantidad de cartas de cada participante.
     if (iniciada && cantidadesDeCartas.has(nombre)) {
       elemento.append(` — ${cantidadesDeCartas.get(nombre)} cartas`);
+    }
+    if (iniciada) {
+      const equipo = equiposPorNombre.get(nombre);
+      elemento.append(` — Equipo: ${equipo ?? "ninguno"}`);
     }
     // La eliminación es independiente de estar conectado o desconectado.
     if (jugadoresEliminados.includes(nombre)) {
