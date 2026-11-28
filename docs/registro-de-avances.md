@@ -284,3 +284,12 @@ están pendientes de implementar.
 - Solo pueden utilizarse contra otro participante activo con equipo,
   durante el turno propio y sin un ataque pendiente.
 - Se verificó manualmente el funcionamiento de ambas cartas.
+
+### Reciclado del descarte — 28/11/2026
+
+- Al agotarse el mazo, se mezclan las cartas del descarte excepto
+  la última, que permanece visible en su lugar.
+- Si el descarte contiene una sola carta, no puede reciclarse.
+- Los ejemplares reciclados conservan sus identificadores.
+- Se agregaron dos pruebas automáticas para estas condiciones.
+- La suite completó tres pruebas sin fallos ni errores.

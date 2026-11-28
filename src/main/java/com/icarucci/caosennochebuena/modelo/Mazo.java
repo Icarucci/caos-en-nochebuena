@@ -33,13 +33,14 @@ public class Mazo {
     }
 
     public Optional<Carta> robar() {
-        // Si se agotó el mazo principal, reciclamos todo el descarte.
+        // Si se agotó el mazo, reciclamos el descarte
+        // conservando su última carta.
         if (cartas.isEmpty()) {
             reciclarDescarte();
         }
 
-        // Puede no quedar ninguna carta si todas están en manos
-        // o equipadas. En ese caso devolvemos Optional.empty().
+        // Puede no haber cartas disponibles, aunque quede una visible
+        // en el descarte. En ese caso devolvemos Optional.empty().
         return Optional.ofNullable(cartas.pollFirst());
     }
 
@@ -72,15 +73,22 @@ public class Mazo {
     }
 
     private void reciclarDescarte() {
-        if (descarte.isEmpty()) {
+        // La carta superior debe permanecer en el descarte.
+        // Con cero o una carta no hay ninguna disponible para reciclar.
+        if (descarte.size() <= 1) {
             return;
         }
 
-        // Mezclamos y reutilizamos las mismas cartas:
-        // sus identificadores se conservan.
+        // Apartamos la última carta antes de mezclar las demás.
+        Carta ultimaDescartada = descarte.remove(descarte.size() - 1);
+
+        // Reutilizamos los mismos ejemplares, conservando sus identificadores.
         Collections.shuffle(descarte);
         cartas.addAll(descarte);
+
+        // El descarte queda únicamente con la carta que estaba visible.
         descarte.clear();
+        descarte.add(ultimaDescartada);
     }
 
     public int getCantidadCartas() {
