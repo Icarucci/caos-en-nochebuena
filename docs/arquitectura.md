@@ -144,53 +144,142 @@ privada son funcionalidades planificadas, todavía no implementadas.
 
 ## Efectos de cartas y combate
 
-Carta representa un ejemplar identificado por su ID y su tipo.
-Los comportamientos se separan mediante la interfaz EfectoCarta.
+Carta representa un ejemplar inmutable identificado por su ID y su tipo.
+Los comportamientos se organizan en el paquete modelo.efecto.
 
-Actualmente existen tres implementaciones:
+La implementación utiliza composición y el patrón Strategy:
+Partida selecciona el comportamiento correspondiente mediante registros
+que relacionan tipos de carta con implementaciones de interfaces.
+
+### Cartas jugadas desde la mano
+
+EfectoCarta define el contrato para ejecutar estas cartas.
+Actualmente lo implementan:
 
 - EfectoBolaDeNieve.
 - EfectoEsquivar.
 - EfectoDevolver.
+- EfectoCuracion.
+- EfectoGrinch.
+- EfectoEnTarlipes.
 
-Partida valida la solicitud y consume la carta antes de ejecutar su efecto.
-Un adaptador privado implementa ContextoEfectoCarta y permite a los
-efectos solicitar operaciones sin exponer las colecciones internas.
+Partida valida la solicitud antes de consumir la carta y ejecutar su efecto.
 
-Esta organización utiliza composición y el patrón Strategy:
-cada comportamiento implementa un contrato común.
+Un adaptador privado implementa ContextoEfectoCarta. Permite solicitar
+operaciones de ataque, curación, robo, descarte y equipamiento sin exponer
+las colecciones internas de la partida.
 
-Combate conserva el ataque pendiente, crea los plazos de respuesta
-y permite consultar su vencimiento y los segundos restantes.
+### Efectos automáticos de los equipos
 
-Partida conserva la coordinación de turnos, manos, vidas, daño,
-eliminaciones y resultado. Sus métodos sincronizados protegen también
-las operaciones que delega en Combate.
+Los beneficios se separan según el momento de activación:
+
+| Contrato | Implementación | Momento |
+| --- | --- | --- |
+| EfectoInicioTurno | EfectoArbolNavideno | Al comenzar el turno del portador. |
+| EfectoAlRecibirDanio | EfectoBullyNavideno | Después del daño de una Bola de nieve. |
+| EfectoAnteDanioLetal | EfectoLoRecalentadoDeAnoche | Antes de aplicar un daño letal. |
+| EfectoAlCausarDanio | EfectoPinzaDelAsador | Después del daño de una bola y antes de eliminar al objetivo. |
+| EfectoAlFinalizarBola | EfectoDobleEntrega | Cuando termina toda la cadena de una bola. |
+
+Las clases de efectos contienen sus comportamientos y mensajes específicos.
+Partida coordina su ejecución y conserva el control del estado.
+
+Consultar un permiso no debe consumir cartas, activar beneficios ni
+generar mensajes de actividad.
+
+### Responsabilidades del combate
+
+Combate conserva el ataque pendiente, genera sus identificadores y plazos
+de respuesta, y permite consultar su vencimiento y tiempo restante.
+
+Partida administra turnos, manos, vidas, daño, eliminaciones y resultado.
+Sus métodos sincronizados protegen también las operaciones que delega
+en Combate y Equipamiento.
+
+Devolver abre una nueva respuesta sin reanudar el reloj del turno.
+La cadena termina cuando se bloquea, impacta o se cancela.
+
+ResultadoBolaDeNieve distingue:
+
+- BLOQUEADA: la bola terminó bloqueada.
+- IMPACTO: alcanzó a un jugador, incluida la activación de Lo recalentado.
+- CANCELADA: la resolución se interrumpió, por ejemplo, por un abandono.
+
+Esta clasificación permite que Doble entrega distinga un bloqueo de una
+salvación, sin depender únicamente de las vidas finales.
 
 ### Efectos de curación
 
-EfectoCuracion implementa EfectoCarta y se configura con cantidad,
-alcance y nombre de la carta. Las comidas reutilizan esta implementación.
+EfectoCuracion se configura con cantidad, alcance y nombre de la carta.
+Las comidas reutilizan esta implementación.
 
-Partida valida la jugada antes de consumir la carta. El contexto permite
-consultar participantes activos y recuperar vidas sin exponer los mapas
-internos. Partida aplica el límite de vidas y registra la recuperación.
+Las comidas individuales recuperan una vida a quien las juega.
+Asado y Lechón con ensalada rusa recuperan una vida a todos los
+participantes activos.
+
+La curación no supera el máximo del rol ni revive eliminados.
+Si nadie puede recuperar vidas, la carta no se consume.
 
 El frontend recibe los identificadores de las comidas propias utilizables.
 Estos permisos sirven para presentar los controles; el servidor vuelve
 a comprobarlos al recibir cada solicitud.
 
-### Equipamiento
+### Equipamiento y transferencias
 
-Equipamiento conserva la carta activa de cada jugador sin administrar
-manos, descarte ni conexiones. Partida coordina sus operaciones dentro
-de sus métodos sincronizados.
+Equipamiento conserva una carta activa por jugador sin administrar
+manos, descarte ni conexiones.
 
 Las operaciones se distinguen de esta forma:
 
 - Retirar: libera la zona y devuelve la carta sin decidir su destino.
 - Desequipar: retira el equipo y lo envía al descarte.
 - Equipar: valida la solicitud, desequipa el anterior y coloca el nuevo.
+- Robar equipo: lo retira del objetivo y lo transfiere a la mano del jugador,
+  sin descartarlo ni equiparlo automáticamente.
 
-Un futuro robo de equipo podrá utilizar la retirada para transferir
-la carta, sin ejecutar el descarte.
+Grinch utiliza el robo de equipo. En tarlipes utiliza desequipar.
+Ambas cartas se descartan después de jugarlas.
+
+Los equipos son públicos, se conservan al reconectar y se descartan
+al abandonar o quedar eliminado.
+
+### Reglas de los beneficios implementados
+
+- Árbol navideño: roba una carta adicional al comenzar el turno.
+  Equiparlo o reconectarse no repite el robo.
+- Bully navideño: tras recibir daño de una bola, causa un daño directo
+  e indefendible al atacante. Primero se resuelve la posible eliminación
+  del objetivo y el resultado; la represalia solo ocurre si la partida
+  continúa. No consume el equipo ni activa otra represalia.
+- Lo recalentado de anoche: evita un daño letal y deja una vida.
+  Descarta primero el equipo, después toda la mano y finalmente intenta
+  robar una carta del mazo. Funciona contra bolas y represalias de Bully,
+  pero no contra inactividad o abandono.
+- Pinza del asador: cuando la bola causa daño, roba una comida aleatoria
+  del objetivo, incluidas las grupales. El robo ocurre antes de descartar
+  la mano por eliminación y no revela públicamente la carta transferida.
+  No consume el equipo.
+- Doble entrega: si la primera bola termina bloqueada, habilita un segundo
+  lanzamiento contra cualquier objetivo válido, incluido el anterior.
+  Espera toda la cadena de devoluciones y exige otra bola en la mano.
+  Un impacto, incluida la salvación de Lo recalentado, no habilita el
+  beneficio. El máximo es de dos lanzamientos por turno y el equipo debe
+  permanecer colocado.
+
+### Mazo y descarte
+
+Mazo crea los ejemplares, mezcla, permite robar y administra el descarte.
+
+Al robar la última carta del mazo se intenta reciclar inmediatamente
+el descarte. Se conserva su carta superior y se mezclan las anteriores
+para formar el nuevo mazo, manteniendo sus identificadores.
+
+El mismo reciclado se intenta si una solicitud de robo encuentra
+el mazo vacío. Si no hay cartas reciclables, se entregan únicamente
+las disponibles.
+
+Las cartas en manos y los equipos activos no participan del reciclado.
+El robo de Lo recalentado utiliza esta operación normal del mazo.
+
+Las pruebas de MazoRecicladoTest se encuentran en src/test/java y verifican
+la conservación de la carta superior y el momento del reciclado.
